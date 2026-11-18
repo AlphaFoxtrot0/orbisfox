@@ -1,0 +1,14 @@
+{
+  "Group": "AlphaFoxtrot",
+  "Name": "OrbisFoxBridge",
+  "Version": "1.0.0",
+  "Description": "Reports players, pings, kills, distance walked, world tick rates, loaded chunks and map images to the OrbisFox panel over 127.0.0.1. Idle unless the server was started by OrbisFox.",
+  "Authors": [{"Name": "AlphaFoxtrot"}],
+  "Website": "https://github.com/AlphaFoxtrot0/orbisfox",
+  "ServerVersion": "*",
+  "Dependencies": {},
+  "OptionalDependencies": {},
+  "DisabledByDefault": false,
+  "Main": "com.alphafoxtrot.orbisfox.bridge.OrbisFoxBridge",
+  "IncludesAssetPack": false
+}

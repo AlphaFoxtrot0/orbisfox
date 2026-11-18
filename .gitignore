@@ -1,0 +1,12 @@
+# OrbisFox data (settings, backups, stats, logs) stays on your PC
+data/
+data-demo/
+__pycache__/
+*.pyc
+# plugin build output (release jars are attached to GitHub releases)
+plugin/build/
+plugin/.gradle/
+plugin/dist/*.jar
+.idea/
+.vscode/
+*.log
