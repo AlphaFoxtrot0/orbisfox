@@ -3,10 +3,9 @@ data/
 data-demo/
 __pycache__/
 *.pyc
-# plugin build output (release jars are attached to GitHub releases)
+# plugin build output (the release jar in plugin/dist is kept so 'Install plugin' works)
 plugin/build/
 plugin/.gradle/
-plugin/dist/*.jar
 .idea/
 .vscode/
 *.log

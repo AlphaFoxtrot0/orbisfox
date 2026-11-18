@@ -17,6 +17,14 @@ It listens on **127.0.0.1 only** and only when the server was started by OrbisFo
 port and a fresh random token in the environment (`ORBISFOX_BRIDGE_PORT`, `ORBISFOX_BRIDGE_TOKEN`), and
 every request must carry the token. On a server started any other way the plugin does nothing.
 
+## Status
+
+`dist/OrbisFoxBridge.jar` is built against the Hytale **0.7.7** server API (the current release).
+It compiles cleanly against that API, and every server call it makes was checked against the real
+classes. If a later Hytale version renames something, that part switches off and logs a line; the
+rest keeps working, and the chunk map falls back to players' view areas. Rebuild against the new
+version with `-PhytaleVersion=...`.
+
 ## Install
 
 From the OrbisFox panel: *Mods and logs → Install plugin*, then restart the server. Or copy

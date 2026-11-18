@@ -1,33 +1,36 @@
 package com.alphafoxtrot.orbisfox.bridge;
 
+import com.hypixel.hytale.math.util.ChunkUtil;
+import com.hypixel.hytale.protocol.packets.worldmap.MapImage;
 import com.hypixel.hytale.server.core.universe.world.World;
+import com.hypixel.hytale.server.core.universe.world.chunk.palette.BitFieldArr;
+import com.hypixel.hytale.server.core.universe.world.storage.ChunkStore;
+import com.hypixel.hytale.server.core.universe.world.worldmap.WorldMapManager;
+import it.unimi.dsi.fastutil.longs.LongIterator;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import it.unimi.dsi.fastutil.longs.LongSet;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Which chunks a world has loaded, and the server's own map image for one of them.
+ * Which chunks a world has loaded (with those still loading or generating marked), and the
+ * server's own world-map image for a loaded chunk.
  *
- * <p>The server API has a loaded-chunk count but no documented list, so the list is found by
- * looking at the chunk store's methods at run time (read on the world thread). If that fails on a
- * future version, the plugin falls back to the chunks inside each player's view and says the list
- * is not exact. Map images are only requested for chunks that are loaded, so the map never makes
- * the server load or generate terrain.</p>
+ * <p>Map images come from the world map's in-memory cache when possible; otherwise they are
+ * rendered only for chunks that are already loaded, so the map never makes the server load or
+ * generate terrain. If a future server version changes these APIs, the plugin falls back to the
+ * chunks inside each player's view and reports the list as not exact.</p>
  */
 final class Chunks {
 
@@ -36,9 +39,6 @@ final class Chunks {
 
     record Result(List<int[]> chunks, boolean exact, int chunkSize) { }
 
-    private Method listMethod;           // ChunkStore method that returns the loaded chunk indexes
-    private boolean searched;
-    private Method decodeX, decodeZ;     // ChunkUtil long -> int
     private final Map<String, Set<Long>> lastLoaded = new LinkedHashMap<>();
     private final Map<String, byte[]> tiles = new LinkedHashMap<>(256, 0.75f, true) {
         @Override
@@ -49,19 +49,43 @@ final class Chunks {
 
     Result loaded(World world, List<Tracker.Player> players) {
         try {
-            Set<Long> idx = onWorldThread(world, () -> readIndexes(world));
-            if (idx != null && !idx.isEmpty()) {
-                List<int[]> out = new ArrayList<>(idx.size());
-                for (long i : idx) out.add(new int[]{decode(i, true), decode(i, false), 0});
-                synchronized (lastLoaded) {
-                    lastLoaded.put(world.getName(), idx);
-                }
-                return new Result(out, true, CHUNK);
+            List<long[]> found = onWorldThread(world, () -> read(world));
+            List<int[]> out = new ArrayList<>(found.size());
+            Set<Long> ready = new HashSet<>();
+            for (long[] c : found) {
+                out.add(new int[]{ChunkUtil.xOfChunkIndex(c[0]), ChunkUtil.zOfChunkIndex(c[0]), (int) c[1]});
+                if (c[1] == 0) ready.add(c[0]);
             }
+            synchronized (lastLoaded) {
+                lastLoaded.put(world.getName(), ready);
+            }
+            return new Result(out, true, CHUNK);
         } catch (Throwable t) {
             OrbisFoxBridge.LOG.fine("loaded chunk list unavailable: " + t);
         }
-        // Fallback: what players can see.
+        return approximate(players);
+    }
+
+    /** On the world thread: every chunk the store tracks; state 0 = loaded, 1 = still loading/generating. */
+    private static List<long[]> read(World world) {
+        ChunkStore store = world.getChunkStore();
+        LongSet indexes = new LongOpenHashSet(store.getChunkIndexes());
+        List<long[]> out = new ArrayList<>(indexes.size());
+        for (LongIterator it = indexes.iterator(); it.hasNext(); ) {
+            long idx = it.nextLong();
+            boolean ready;
+            try {
+                var ref = store.getChunkReference(idx);
+                ready = ref != null && ref.isValid();
+            } catch (RuntimeException e) {
+                ready = true;
+            }
+            out.add(new long[]{idx, ready ? 0 : 1});
+        }
+        return out;
+    }
+
+    private static Result approximate(List<Tracker.Player> players) {
         Set<Long> seen = new HashSet<>();
         List<int[]> out = new ArrayList<>();
         int r = FALLBACK_RADIUS;
@@ -70,97 +94,11 @@ final class Chunks {
             for (int dx = -r; dx <= r; dx++) {
                 for (int dz = -r; dz <= r; dz++) {
                     if (dx * dx + dz * dz > r * r) continue;
-                    long key = (((long) (pcx + dx)) << 32) ^ ((pcz + dz) & 0xffffffffL);
-                    if (seen.add(key)) out.add(new int[]{pcx + dx, pcz + dz, 0});
+                    if (seen.add(ChunkUtil.indexChunk(pcx + dx, pcz + dz))) out.add(new int[]{pcx + dx, pcz + dz, 0});
                 }
             }
         }
         return new Result(out, false, CHUNK);
-    }
-
-    private Set<Long> readIndexes(World world) throws Exception {
-        Object store = world.getChunkStore();
-        if (!searched) {
-            searched = true;
-            for (Method m : store.getClass().getMethods()) {
-                if (m.getParameterCount() != 0 || Modifier.isStatic(m.getModifiers())) continue;
-                String n = m.getName().toLowerCase();
-                if (n.contains("count") || n.contains("size")) continue;
-                boolean looks = (n.contains("loaded") && n.contains("chunk")) || n.equals("getchunkindexes")
-                        || n.equals("getloadedindexes") || n.equals("getchunks");
-                if (looks && convertible(m.getReturnType())) {
-                    listMethod = m;
-                    break;
-                }
-            }
-            if (listMethod != null) OrbisFoxBridge.LOG.info("Loaded-chunk list via ChunkStore." + listMethod.getName());
-            else OrbisFoxBridge.LOG.info("No loaded-chunk list in this server version; the map shows players' view areas.");
-        }
-        if (listMethod == null) return null;
-        return toLongs(listMethod.invoke(store));
-    }
-
-    private static boolean convertible(Class<?> c) {
-        return Collection.class.isAssignableFrom(c) || Map.class.isAssignableFrom(c) || c == long[].class
-                || Iterable.class.isAssignableFrom(c);
-    }
-
-    private static Set<Long> toLongs(Object o) {
-        Set<Long> out = new HashSet<>();
-        if (o == null) return out;
-        if (o instanceof long[] arr) {
-            for (long v : arr) out.add(v);
-            return out;
-        }
-        if (o instanceof Map<?, ?> m) o = m.keySet();
-        if (o instanceof Iterable<?> it) {
-            Iterator<?> iter = it.iterator();
-            while (iter.hasNext()) {
-                Object v = iter.next();
-                if (v instanceof Long l) out.add(l);
-                else if (v instanceof Number num) out.add(num.longValue());
-            }
-        }
-        return out;
-    }
-
-    private int decode(long index, boolean x) {
-        if (decodeX == null && decodeZ == null) {
-            try {
-                Class<?> cu = Class.forName("com.hypixel.hytale.math.util.ChunkUtil");
-                for (Method m : cu.getMethods()) {
-                    if (!Modifier.isStatic(m.getModifiers()) || m.getParameterCount() != 1
-                            || m.getParameterTypes()[0] != long.class || m.getReturnType() != int.class) continue;
-                    String n = m.getName().toLowerCase();
-                    if (n.contains("x") && !n.contains("z") && decodeX == null) decodeX = m;
-                    if (n.contains("z") && !n.contains("x") && decodeZ == null) decodeZ = m;
-                }
-            } catch (Throwable ignored) {
-                // use the common packing below
-            }
-            if (decodeX == null) decodeX = NONE;
-            if (decodeZ == null) decodeZ = NONE;
-        }
-        Method m = x ? decodeX : decodeZ;
-        if (m != NONE) {
-            try {
-                return (int) m.invoke(null, index);
-            } catch (Throwable ignored) {
-                // fall through
-            }
-        }
-        return x ? (int) (index >> 32) : (int) index;
-    }
-
-    private static final Method NONE;
-    static {
-        Method m = null;
-        try {
-            m = Object.class.getMethod("hashCode");
-        } catch (NoSuchMethodException ignored) {
-            // impossible
-        }
-        NONE = m;
     }
 
     // ------------------------------------------------------------------------------------ map images
@@ -170,24 +108,18 @@ final class Chunks {
             byte[] cached = tiles.get(key);
             if (cached != null) return cached;
         }
-        Set<Long> loaded;
-        synchronized (lastLoaded) {
-            loaded = lastLoaded.get(world.getName());
-        }
-        if (loaded == null) return null;     // only exact lists allow images
-        boolean isLoaded = false;
-        for (long i : loaded) {
-            if (decode(i, true) == cx && decode(i, false) == cz) {
-                isLoaded = true;
-                break;
-            }
-        }
-        if (!isLoaded) return null;
         try {
-            Object mgr = world.getClass().getMethod("getWorldMapManager").invoke(world);
-            Method get = mgr.getClass().getMethod("getImageAsync", int.class, int.class);
-            Object fut = get.invoke(mgr, cx, cz);
-            Object image = fut instanceof Future<?> f ? f.get(4, TimeUnit.SECONDS) : fut;
+            WorldMapManager mgr = world.getWorldMapManager();
+            if (mgr == null) return null;
+            MapImage image = mgr.getImageIfInMemory(cx, cz);
+            if (image == null) {
+                Set<Long> loaded;
+                synchronized (lastLoaded) {
+                    loaded = lastLoaded.get(world.getName());
+                }
+                if (loaded == null || !loaded.contains(ChunkUtil.indexChunk(cx, cz))) return null;
+                image = mgr.getImageAsync(cx, cz).get(4, TimeUnit.SECONDS);
+            }
             byte[] png = encode(image);
             if (png != null) {
                 synchronized (tiles) {
@@ -201,17 +133,20 @@ final class Chunks {
         }
     }
 
-    private static byte[] encode(Object image) throws Exception {
-        if (image == null) return null;
-        Class<?> c = image.getClass();
-        int w = intField(c, image, "width"), h = intField(c, image, "height");
-        Field df = c.getField("data");
-        int[] data = (int[]) df.get(image);
-        if (w <= 0 || h <= 0 || data == null || data.length < w * h) return null;
+    /** MapImage is palette-encoded: each pixel is an index into `palette` (RGBA colours). */
+    private static byte[] encode(MapImage image) throws Exception {
+        if (image == null || image.width <= 0 || image.height <= 0 || image.palette == null || image.packedIndices == null) {
+            return null;
+        }
+        int w = image.width, h = image.height;
+        BitFieldArr bits = new BitFieldArr(image.bitsPerIndex, w * h);
+        bits.set(image.packedIndices);
+        int[] palette = image.palette;
         BufferedImage img = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
-                int rgba = data[y * w + x];
+                int i = bits.get(y * w + x);
+                int rgba = i >= 0 && i < palette.length ? palette[i] : 0;
                 int argb = ((rgba & 0xFF) << 24) | ((rgba >>> 24) << 16) | (((rgba >> 16) & 0xFF) << 8) | ((rgba >> 8) & 0xFF);
                 img.setRGB(x, y, argb);
             }
@@ -221,11 +156,7 @@ final class Chunks {
         return out.toByteArray();
     }
 
-    private static int intField(Class<?> c, Object o, String name) throws Exception {
-        return ((Number) c.getField(name).get(o)).intValue();
-    }
-
-    private static <T> T onWorldThread(World world, java.util.concurrent.Callable<T> task) throws Exception {
+    private static <T> T onWorldThread(World world, Callable<T> task) throws Exception {
         if (world.isInThread()) return task.call();
         CompletableFuture<T> f = new CompletableFuture<>();
         world.execute(() -> {
