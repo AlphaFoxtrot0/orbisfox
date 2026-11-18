@@ -8,7 +8,6 @@ import json
 import os
 import re
 import time
-import urllib.request
 import zipfile
 from xml.etree import ElementTree
 
@@ -248,9 +247,8 @@ MAVEN = "https://maven.hytale.com/{line}/com/hypixel/hytale/Server/maven-metadat
 def latest_version(patchline="release", timeout=10):
     """Newest server version published for a patchline (public, no sign-in needed)."""
     line = "pre-release" if patchline == "pre-release" else "release"
-    req = urllib.request.Request(MAVEN.format(line=line), headers={"User-Agent": "OrbisFox"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        root = ElementTree.fromstring(r.read())
+    from . import net
+    root = ElementTree.fromstring(net.fetch(MAVEN.format(line=line), timeout=timeout))
     ver = root.findtext("versioning/release") or root.findtext("versioning/latest")
     versions = [v.text for v in root.findall("versioning/versions/version") if v.text]
     if versions:

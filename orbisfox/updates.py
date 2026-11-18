@@ -17,7 +17,6 @@ import shutil
 import subprocess
 import threading
 import time
-import urllib.request
 import zipfile
 
 from . import hytale
@@ -246,9 +245,8 @@ class Updates:
         dest = os.path.join(self.core.data_dir, "downloader")
         os.makedirs(dest, exist_ok=True)
         tmp = os.path.join(dest, "hytale-downloader.zip")
-        req = urllib.request.Request(DOWNLOADER_ZIP, headers={"User-Agent": "OrbisFox"})
-        with urllib.request.urlopen(req, timeout=60) as r, open(tmp, "wb") as f:
-            shutil.copyfileobj(r, f)
+        from . import net
+        net.download(DOWNLOADER_ZIP, tmp)
         root = os.path.realpath(dest)
         with zipfile.ZipFile(tmp) as z:
             for info in z.infolist():
