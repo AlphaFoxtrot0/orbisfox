@@ -24,12 +24,12 @@ def _browser():
     return next((c for c in cands if c and os.path.isfile(c)), None)
 
 
-def open_window(url):
+def open_window(url, data_dir=None):
     exe = _browser()
     if not exe:
         webbrowser.open(url)
         return
-    profile = os.path.join(DATA_DIR, "window")
+    profile = os.path.join(data_dir or DATA_DIR, "window")
     os.makedirs(profile, exist_ok=True)
     subprocess.Popen([exe, f"--app={url}", f"--user-data-dir={profile}", "--window-size=1500,940",
                       "--no-first-run", "--no-default-browser-check", "--disable-features=Translate"],

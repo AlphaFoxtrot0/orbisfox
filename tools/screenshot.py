@@ -122,7 +122,11 @@ def main():
             f.write(base64.b64decode(shot["data"]))
         print("saved", a.out)
     finally:
-        proc.kill()
+        # Edge hands off to child processes; end the whole tree.
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True)
+        else:
+            proc.kill()
 
 
 if __name__ == "__main__":

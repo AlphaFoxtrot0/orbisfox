@@ -87,7 +87,7 @@ def main(argv=None):
     url = f"http://127.0.0.1:{port}/"
     if _running_instance(port):
         if show:
-            desktop.open_window(url)
+            desktop.open_window(url, data_dir)
         return 0
 
     from .core import Core
@@ -105,7 +105,7 @@ def main(argv=None):
     core.log_app(f"OrbisFox {__version__} is running at {url}" + (" (also on your network)" if lan else ""))
     core.start_threads()
     if show:
-        desktop.open_window(url)
+        desktop.open_window(url, data_dir)
     else:
         print(f"OrbisFox is running at {url}")
 
