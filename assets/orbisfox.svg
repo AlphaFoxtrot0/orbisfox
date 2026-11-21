@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- OrbisFox mark: a faceted fox rising over the voxel world of Orbis, inside a gilded hexagon. -->
+  <defs>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFE08A"/>
+      <stop offset="0.35" stop-color="#E8B029"/>
+      <stop offset="0.7" stop-color="#B9771F"/>
+      <stop offset="1" stop-color="#7A4A14"/>
+    </linearGradient>
+    <linearGradient id="goldEdge" x1="1" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#FFE9A8"/>
+      <stop offset="1" stop-color="#8C5A18"/>
+    </linearGradient>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0A1E22"/>
+      <stop offset="0.6" stop-color="#103038"/>
+      <stop offset="1" stop-color="#1B4A50"/>
+    </linearGradient>
+    <linearGradient id="grass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5DBB63"/>
+      <stop offset="1" stop-color="#2E7D46"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#9FF3FF" stop-opacity="1"/>
+      <stop offset="0.35" stop-color="#4DC4D8" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#4DC4D8" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="inner">
+      <polygon points="256,94 413,185 413,367 256,458 99,367 99,185"/>
+    </clipPath>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6"/>
+    </filter>
+  </defs>
+
+  <!-- gilded hexagon rim with a bevel -->
+  <polygon points="256,62 441,169 441,383 256,490 71,383 71,169" fill="url(#gold)"/>
+  <polygon points="256,80 425,178 425,374 256,472 87,374 87,178" fill="none" stroke="url(#goldEdge)" stroke-width="4"/>
+  <polygon points="256,94 413,185 413,367 256,458 99,367 99,185" fill="url(#sky)"/>
+
+  <g clip-path="url(#inner)">
+    <!-- voxel stars -->
+    <rect x="132" y="214" width="6" height="6" fill="#E2D3C0" opacity="0.8"/>
+    <rect x="372" y="232" width="6" height="6" fill="#E2D3C0" opacity="0.7"/>
+    <rect x="352" y="196" width="4" height="4" fill="#4DC4D8"/>
+    <rect x="150" y="262" width="4" height="4" fill="#4DC4D8" opacity="0.8"/>
+    <rect x="390" y="300" width="4" height="4" fill="#E2D3C0" opacity="0.6"/>
+    <!-- Orbis: a blocky world rising at the bottom, with a cyan atmosphere -->
+    <path d="M60 372 L92 372 L92 356 L124 356 L124 344 L156 344 L156 336 L188 336 L188 330 L220 330 L220 326 L292 326 L292 330 L324 330 L324 336 L356 336 L356 344 L388 344 L388 356 L420 356 L420 372 L452 372"
+          fill="none" stroke="#4DC4D8" stroke-width="10" opacity="0.55" filter="url(#soft)"/>
+    <path d="M60 372 L92 372 L92 356 L124 356 L124 344 L156 344 L156 336 L188 336 L188 330 L220 330 L220 326 L292 326 L292 330 L324 330 L324 336 L356 336 L356 344 L388 344 L388 356 L420 356 L420 372 L452 372 L452 520 L60 520 Z"
+          fill="url(#grass)"/>
+    <path d="M60 384 L92 384 L92 368 L124 368 L124 356 L156 356 L156 348 L188 348 L188 342 L220 342 L220 338 L292 338 L292 342 L324 342 L324 348 L356 348 L356 356 L388 356 L388 368 L420 368 L420 384 L452 384 L452 520 L60 520 Z"
+          fill="#6B4A2E"/>
+    <path d="M60 412 L120 412 L120 400 L200 400 L200 394 L312 394 L312 400 L392 400 L392 412 L452 412 L452 520 L60 520 Z" fill="#4A3424"/>
+    <rect x="232" y="352" width="16" height="16" fill="#7E8A86"/>
+    <rect x="296" y="372" width="16" height="16" fill="#7E8A86" opacity="0.8"/>
+    <rect x="160" y="372" width="16" height="16" fill="#3E2C1F"/>
+    <rect x="352" y="420" width="16" height="16" fill="#4DC4D8" opacity="0.9"/>
+    <rect x="136" y="428" width="16" height="16" fill="#E8B029" opacity="0.85"/>
+  </g>
+
+  <!-- signal light between the ears -->
+  <circle cx="256" cy="112" r="26" fill="url(#glow)"/>
+  <polygon points="256,98 266,112 256,126 246,112" fill="#BFF8FF"/>
+
+  <!-- the fox: low-poly, lit from the upper left -->
+  <g transform="translate(256 252) scale(0.86) translate(-256 -252)">
+  <g stroke="#3A1C0C" stroke-width="2" stroke-linejoin="round">
+    <!-- ears (breaking out of the frame) -->
+    <polygon points="140,40 116,212 208,148" fill="#E8742A"/>
+    <polygon points="372,40 396,212 304,148" fill="#C85A1E"/>
+    <polygon points="146,82 134,188 192,150" fill="#F2E4CF" stroke="none"/>
+    <polygon points="366,82 378,188 320,150" fill="#E2D3C0" stroke="none"/>
+    <polygon points="140,40 131,92 156,84" fill="#1A1410"/>
+    <polygon points="372,40 381,92 356,84" fill="#1A1410"/>
+    <!-- crown and brow -->
+    <polygon points="208,148 256,166 256,250 198,214" fill="#F08A3C"/>
+    <polygon points="304,148 256,166 256,250 314,214" fill="#D66623"/>
+    <polygon points="208,148 198,214 98,262 116,212" fill="#D66623"/>
+    <polygon points="304,148 314,214 414,262 396,212" fill="#B4501A"/>
+    <!-- orange mask around the eyes -->
+    <polygon points="198,214 256,250 216,288 170,292 98,262" fill="#E06A24"/>
+    <polygon points="314,214 256,250 296,288 342,292 414,262" fill="#C25A1E"/>
+    <!-- white cheeks -->
+    <polygon points="98,262 170,292 198,352 140,320" fill="#F7EBD8"/>
+    <polygon points="414,262 342,292 314,352 372,320" fill="#E6D6C0"/>
+    <!-- muzzle -->
+    <polygon points="256,250 216,288 198,352 256,402" fill="#F2E4CF"/>
+    <polygon points="256,250 296,288 314,352 256,402" fill="#DCCBB4"/>
+    <polygon points="170,292 216,288 198,352" fill="#EFDFC8"/>
+    <polygon points="342,292 296,288 314,352" fill="#D8C6AE"/>
+  </g>
+  <!-- rune-lit eyes -->
+  <polygon points="174,262 206,244 236,266 206,282" fill="#081012"/>
+  <polygon points="338,262 306,244 276,266 306,282" fill="#081012"/>
+  <rect x="200" y="254" width="13" height="13" fill="#4DC4D8"/>
+  <rect x="299" y="254" width="13" height="13" fill="#4DC4D8"/>
+  <rect x="203" y="257" width="4" height="4" fill="#E8FDFF"/>
+  <rect x="302" y="257" width="4" height="4" fill="#E8FDFF"/>
+  <!-- nose and mouth -->
+  <polygon points="236,330 276,330 256,352" fill="#1A1410" stroke="#1A1410" stroke-width="2" stroke-linejoin="round"/>
+  <polygon points="244,333 256,333 250,339" fill="#5B4A40"/>
+  <path d="M256 352 L256 368 M256 368 L244 378 M256 368 L268 378" stroke="#1A1410" stroke-width="4" stroke-linecap="round" fill="none"/>
+  </g>
+</svg>

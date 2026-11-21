@@ -21,6 +21,7 @@ from .updates import Updates
 from .veto import Vetoes
 from .memories import Memories
 from .worldmap import WorldMap
+from .selfupdate import AppUpdates
 
 
 class Core:
@@ -45,6 +46,8 @@ class Core:
         self.vetoes = Vetoes(self)
         self.memories = Memories(self)
         self.worldmap = WorldMap(self)
+        self.appupdates = AppUpdates(self)
+        self.argv = []
         self._daily_retry = None      # (label) of a daily restart an operator vetoed
         self.peak_players = 0
         self.auth_prompt = None       # {"url", "code"} when the server asks to be signed in
@@ -75,6 +78,7 @@ class Core:
         if self.settings["auto_start"] and self.server_dir() and not self.orphan:
             threading.Thread(target=lambda: self._safe_start("OrbisFox opened"), daemon=True).start()
         threading.Thread(target=self.updates.check, daemon=True).start()
+        threading.Thread(target=self.appupdates.check, daemon=True).start()
 
     def _safe_start(self, reason):
         try:
@@ -283,6 +287,7 @@ class Core:
                 self._daily_restarts()
                 self._periodic_backup()
                 self._periodic_update_check()
+                self._periodic_app_update()
             except Exception as e:  # noqa: BLE001
                 self.log_app(f"Scheduler error: {e}", level="error")
 
@@ -315,6 +320,16 @@ class Core:
                 label = f"daily restart at {hhmm}"
                 if not self.server.schedule("restart", max(0, int(left)), label, message=tmpl, kind="daily"):
                     self._daily_retry = label
+
+    def _periodic_app_update(self):
+        au, up = self.settings.get("app_updates", {}), self.appupdates
+        hours = float(au.get("check_every_hours", 6) or 0)
+        if hours > 0 and up.checked_at and time.time() - up.checked_at >= hours * 3600:
+            threading.Thread(target=up.check, name="app-update-check", daemon=True).start()
+        quiet = not self.players.online and not self.updates.busy and not self.server.pending
+        if au.get("auto") == "empty" and up.available() and not up.busy and up.failed != up.latest and quiet:
+            self.log_app(f"Installing OrbisFox {up.latest} automatically (nobody is online).")
+            up.install(warn=False)
 
     def on_vetoed(self, kind, label):
         """Called after an operator cancels an automated action."""
@@ -431,6 +446,7 @@ class Core:
             "updates": self.updates.info(),
             "access": self.access_cache(),
             "catalog": [{"cmd": c, "args": a, "desc": d} for c, a, d in hytale.CATALOG],
+            "appupdate": self.appupdates.info(),
         }
 
     def take_over_server_updates(self):

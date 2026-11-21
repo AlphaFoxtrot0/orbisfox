@@ -271,7 +271,87 @@
   }
   window.addEventListener("resize", size);
 
+  // ---------------------------------------------------------------- memories (memories.json from OrbisFox)
+  var mem = null, memFilter = "missing", memSearch = "", view = params.get("view") === "memories" ? "memories" : "map";
+  var TIME = { day: "Daytime", night: "Night only" };
+
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function whereText(e) {
+    if (e.where && e.where.length) return e.where.map(function (w) { return w.zone + (w.biomes.length ? ": " + w.biomes.join(", ") : ""); }).join("  ·  ");
+    return e.placed ? "Dungeons, camps and other structures" : "No natural spawns (bosses, babies or special events)";
+  }
+  function loadMemories() {
+    return getJSON("memories.json").then(function (d) {
+      mem = d;
+      document.getElementById("tabs").hidden = OVERLAY;
+      if (view === "memories") renderMemories();
+    }).catch(function () {
+      mem = null;
+      document.getElementById("tabs").hidden = true;
+      if (view === "memories") setView("map");
+    });
+  }
+  function setView(v) {
+    view = v;
+    document.getElementById("memories").hidden = v !== "memories";
+    document.getElementById("tab-map").setAttribute("aria-selected", String(v === "map"));
+    document.getElementById("tab-mem").setAttribute("aria-selected", String(v === "memories"));
+    ["legend", "coords"].forEach(function (id) { document.getElementById(id).style.visibility = v === "map" ? "" : "hidden"; });
+    document.querySelector(".zoom").style.visibility = v === "map" ? "" : "hidden";
+    document.getElementById("empty").style.display = v === "map" ? "" : "none";
+    if (v === "memories") renderMemories(); else draw();
+  }
+  function renderMemories() {
+    if (!mem) return;
+    var t = mem.totals;
+    document.getElementById("m-restored").textContent = t.restored;
+    document.getElementById("m-total").textContent = t.total;
+    document.getElementById("m-bar").style.width = (t.total ? (t.restored / t.total) * 100 : 0) + "%";
+    document.getElementById("m-note").textContent = t.carried + " more are being carried and still need restoring at the Heart of Orbis. " + t.missing + " haven't been found yet.";
+    var counts = { missing: t.missing, carried: t.carried, restored: t.restored, all: t.total };
+    Array.prototype.forEach.call(document.querySelectorAll("#m-filter button"), function (b) {
+      b.setAttribute("aria-pressed", String(b.dataset.f === memFilter));
+      b.querySelector("b").textContent = counts[b.dataset.f];
+    });
+    var q = memSearch.toLowerCase();
+    var rows = mem.entries.filter(function (e) {
+      return (memFilter === "all" || e.status === memFilter) && (!q || (e.name + " " + e.category + " " + whereText(e)).toLowerCase().indexOf(q) >= 0);
+    });
+    var list = document.getElementById("m-list");
+    list.textContent = "";
+    if (!rows.length) { list.appendChild(el("p", "muted", memFilter === "missing" && !q ? "Every memory has been found." : "Nothing matches.")); return; }
+    var groups = {};
+    rows.forEach(function (e) { (groups[e.category] = groups[e.category] || []).push(e); });
+    Object.keys(groups).sort().forEach(function (cat) {
+      var h = el("div", "mem-cat"); h.appendChild(el("span", "label", cat + "  ·  " + groups[cat].length)); list.appendChild(h);
+      var card = el("div", "card");
+      groups[cat].forEach(function (e) {
+        var row = el("div", "mem-row");
+        var hx = el("div", "hex " + e.status, e.status === "restored" ? "✓" : e.name.split(/[ _]/).map(function (w) { return w[0]; }).join("").slice(0, 2).toUpperCase());
+        var main = el("div", "");
+        var nm = el("div", "nm", e.name);
+        if (e.unlock === "Kill") nm.appendChild(el("span", "tag kill", "Defeat it"));
+        if (TIME[e.time]) nm.appendChild(el("span", "tag time", TIME[e.time]));
+        if (e.status === "restored") nm.appendChild(el("span", "tag done", "Restored"));
+        main.appendChild(nm);
+        main.appendChild(el("div", "where", whereText(e)));
+        if (e.carried_by && e.carried_by.length) {
+          main.appendChild(el("div", "who", "Carried by " + e.carried_by.map(function (c) { return (c.name || "a player") + (c.where ? " (found in " + c.where + ")" : ""); }).join(", ")));
+        }
+        row.appendChild(hx); row.appendChild(main); card.appendChild(row);
+      });
+      list.appendChild(card);
+    });
+  }
+  document.getElementById("tab-map").onclick = function () { setView("map"); };
+  document.getElementById("tab-mem").onclick = function () { setView("memories"); };
+  Array.prototype.forEach.call(document.querySelectorAll("#m-filter button"), function (b) { b.onclick = function () { memFilter = b.dataset.f; renderMemories(); }; });
+  document.getElementById("m-search").oninput = function (e) { memSearch = e.target.value.trim(); renderMemories(); };
+  if (params.get("filter")) memFilter = params.get("filter");
+
   // ---------------------------------------------------------------- start
+  loadMemories().then(function () { if (view === "memories" && mem) setView("memories"); });
+  setInterval(loadMemories, 60000);
   size();
   loadWorlds().then(loadIndex).then(loadPlayers);
   setInterval(function () { loadWorlds().then(loadIndex); }, REFRESH);

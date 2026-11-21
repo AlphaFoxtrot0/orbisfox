@@ -4,7 +4,8 @@
 
 <p align="center"><b>A modern control panel for Hytale dedicated servers.</b><br>
 Live console, one-click restarts, backups, updates, whitelist and operators, player pings and stats,
-a live map of loaded chunks, and a watchdog that rescues a server bogged down by too many loaded chunks.</p>
+an explored-world map and Memories page you can share on stream, and a watchdog that rescues a server
+bogged down by too many loaded chunks.</p>
 
 <p align="center"><img src="docs/img/overview.png" alt="OrbisFox: the console in the middle, server controls and live CPU, memory and tick rate on top, players with pings on the right"></p>
 
@@ -80,16 +81,18 @@ app window) and on Linux (open it in a browser).
 - Players on the map, plus a **Loaded chunks** overlay that shows where the server's memory is going
 - **Share it** read-only on your network for a second screen, a phone or **OBS** (`&overlay=1`), or upload
   the map folder to any static web host. See [docs/world-map.md](docs/world-map.md)
-
-**Memories**
-- How many creature memories the server has restored, which players are carrying which (and where they
-  found them), and every memory nobody has found yet, with the **zones and biomes** the creature lives
-  in, day or night, and whether you must defeat it. Read straight from the game files, no plugin needed
+- A **Memories** page on the same site: how many creature memories the server has restored, who is
+  carrying which (and where they found them), and every memory nobody has found yet, with the **zones
+  and biomes** the creature lives in, day or night, and whether you must defeat it. Read straight from
+  the game files, no plugin needed. Link straight to it with `?view=memories`
 
 **Also**
 - Mods: list, enable and disable; past server logs viewer
 - Open the panel from other devices on your network, behind a password
 - Starts with Windows (optional), desktop and Start menu shortcuts
+- **Keeps itself up to date:** when a new OrbisFox version is pushed to GitHub, the panel offers it.
+  One click downloads it, restarts OrbisFox (stopping and restarting the server around it, with a warning
+  if anyone is online) and keeps your data folder as it is. Or let it install on its own when nobody is online
 
 ## The "too many chunks" freeze
 
@@ -111,7 +114,7 @@ The full explanation, with what Hytale itself has fixed so far, is in
 <p align="center"><img src="docs/img/map.png" width="49%" alt="World map: explored terrain with player markers, and buttons to share the map">
 <img src="docs/img/performance.png" width="49%" alt="Performance panel: health, heap after garbage collection, time in GC, loaded chunks, CPU and memory charts"></p>
 
-<p align="center"><img src="docs/img/memories.png" width="80%" alt="Memories panel: restored count, filters, and missing creatures grouped by category with their zones, biomes and time of day"></p>
+<p align="center"><img src="docs/img/memories.png" width="80%" alt="Memories page of the map site: restored count, filters, and missing creatures grouped by category with their zones, biomes and time of day"></p>
 
 ## Getting started (Windows)
 
@@ -121,7 +124,8 @@ The full explanation, with what Hytale itself has fixed so far, is in
    as `C:\OrbisFox`, or `git clone` it.
 3. Run **`Install.bat`** to add desktop and Start menu shortcuts, then open **OrbisFox**.
 4. Pick your server folder: the one that holds `HytaleServer.jar` (the `Server` folder of the
-   official download). OrbisFox imports your existing setup from `start.bat`, `jvm.options` and
+   official download). Paste its path, press **Browse** to pick it in OrbisFox's own folder browser, or
+   let **Find servers on this PC** look for it. OrbisFox imports your existing setup from `start.bat`, `jvm.options` and
    `config.json` and shows what it found in Settings. **Close the old server window (start.bat)
    first**, then press **Start**.
 5. Optional: open *Mods and logs* and press **Install plugin** to add the OrbisFox Bridge plugin,
@@ -167,7 +171,7 @@ behind a VPN or a sign-in proxy such as Cloudflare Tunnel with Cloudflare Access
 ## Where things are kept
 
 Everything OrbisFox stores lives in its `data` folder, next to the program. That includes its
-settings, backups (unless you choose another folder), player stats and its own log. Updating
+settings, backups (unless you choose another folder), player stats, the map and its own log. Updating
 OrbisFox never touches it. The Hytale server's own files stay where they are.
 
 | | |
@@ -186,6 +190,9 @@ OrbisFox never touches it. The Hytale server's own files stay where they are.
   server may need to be signed in. Also forward **UDP** port 5520 on your router.
 - **"A server from an earlier OrbisFox session is still running":** OrbisFox was closed in a way
   that left the server running without its console. Press *Stop it* to take over.
+- **Lots of browser windows open when OrbisFox starts:** OrbisFox opens one app-mode window using
+  Chrome if you have it, otherwise Edge, with its own profile so first-run pages don't appear. If you
+  prefer a normal browser tab, choose it in Settings → *Starting and stopping* → *Open OrbisFox in*.
 - **Changing config.json by hand:** stop the server first; it rewrites its settings while running.
   View distance and player limit can be changed live from the World panel.
 
@@ -203,6 +210,8 @@ orbisfox/          Python backend (standard library only)
   importer.py      reads an existing server's start script, jvm.options and config.json
   memories.py      memories from Assets.zip and the save files
   worldmap.py      the map folder, its viewer and the read-only network share
+  selfupdate.py    OrbisFox updating itself from GitHub
+  fsbrowse.py      the in-app folder browser and server finder
   backups.py  updates.py  players.py  bridge.py  routes.py  httpd.py  desktop.py
 web/               the panel (plain HTML, CSS and ES modules; no build step)
 web/livemap/       the standalone world-map viewer (copied into the map folder)
@@ -217,6 +226,8 @@ a JSON API under `/api/` and a Server-Sent Events stream at `/api/events`.
 
 - Made by AlphaFoxtrot. The UI follows the AlphaFoxtrot design system: fox orange, circuit cyan and
   hexagons on near-black teal, with a Hytale-style chamfered frame.
+- The OrbisFox logo (a faceted fox over a voxel Orbis in a gold hexagon) was drawn for OrbisFox;
+  its source is `assets/orbisfox.svg`.
 - [Genos](https://fonts.google.com/specimen/Genos) typeface, SIL Open Font License 1.1 (`web/fonts/OFL.txt`).
 - Command, log and file formats come from the official
   [Hytale Server Manual](https://support.hytale.com/hc/en-us/articles/45326769420827-Hytale-Server-Manual)
@@ -227,5 +238,6 @@ trademark of Hypixel Studios.
 
 ## License
 
-The code is released under the MIT License (see [LICENSE](LICENSE)). The AlphaFoxtrot fox artwork
-in `assets/` and `web/img/` is © AlphaFoxtrot and may be used only as part of OrbisFox.
+The code and the OrbisFox logo are released under the MIT License (see [LICENSE](LICENSE)). The
+AlphaFoxtrot hexagon texture (`web/img/hexgrid.jpg`) is © AlphaFoxtrot and may be used only as part of
+OrbisFox.

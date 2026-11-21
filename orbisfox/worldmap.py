@@ -8,6 +8,7 @@ page and a few tiny JSON files, so the folder is a complete static website:
     worlds.json                                         which worlds have tiles
     <world>/index.json, <world>/<1|4|16>/<rx>_<rz>.png    tiles at three zoom levels (from the plugin)
     players.json, status.json                           optional live extras, rewritten every 10 s
+    memories.json                                       the Memories tab, checked every 2 minutes
 
 It is shown inside the panel, can be shared read-only on your network (for OBS or another PC) on its
 own port, and can be uploaded as-is to any static web host. None of this puts work on the server:
@@ -120,11 +121,38 @@ class WorldMap:
         if players != self._last_players:
             self._last_players = players
             self._write("players.json", {"players": players, "t": time.time()})
+        self._write_memories()
         sv = self.core.server
         status = {"online": sv.running, "players": len(self.core.players.online)}
         if status != getattr(self, "_last_status", None) or time.time() - getattr(self, "_status_at", 0) > 60:
             self._last_status, self._status_at = status, time.time()
             self._write("status.json", dict(status, t=round(time.time())))
+
+    def _write_memories(self):
+        """memories.json for the web page: every 2 minutes, written only when it changed."""
+        mp = self.core.settings.get("map", {})
+        if time.time() - getattr(self, "_mem_at", 0) < 120:
+            return
+        self._mem_at = time.time()
+        path = os.path.join(self.dir, "memories.json")
+        if not mp.get("show_memories", True):
+            if os.path.exists(path):
+                os.remove(path)
+            return
+        v = self.core.memories.view()
+        if not v.get("ready"):
+            self._mem_at = time.time() - 105   # still reading Assets.zip: look again shortly
+            return
+        names = mp.get("show_memory_carriers", True)
+        out = {"totals": v["totals"], "t": round(time.time()), "entries": [
+            {"name": e["name"], "category": e["category_name"], "status": e["status"], "where": e["where"],
+             "placed": e["placed"], "time": e["time"], "unlock": e["unlock"],
+             "carried_by": [{"name": c["name"] if names else None, "where": c.get("where")} for c in e["carried_by"]]}
+            for e in v["entries"]]}
+        key = json.dumps([out["totals"], out["entries"]], sort_keys=True)
+        if key != getattr(self, "_mem_key", None):
+            self._mem_key = key
+            self._write("memories.json", out)
 
     def info(self):
         mp = self.core.settings.get("map", {})

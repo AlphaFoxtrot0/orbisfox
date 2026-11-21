@@ -5,6 +5,7 @@ import { mountConsole } from "./console.js";
 import { mountTop } from "./top.js";
 import { mountDock } from "./panels.js";
 import { openMap } from "./map.js";
+import { pickServerFolder } from "./folderpicker.js";
 
 let LOCAL = false;
 let dock = null;
@@ -55,27 +56,49 @@ function loginGate() {
 function setupGate() {
   if (document.querySelector(".gate")) return;
   const dir = h("input", { class: "input", placeholder: "C:\\Hytale\\Server", value: (S.settings && S.settings.server_dir) || "" });
-  const msg = h("div", { class: "muted", style: { minHeight: "44px", fontSize: "16px", lineHeight: "22px" } });
+  const msg = h("div", { role: "status", style: { minHeight: "44px", fontSize: "16px", lineHeight: "22px", color: "var(--ink-muted)" } });
+  const say = (text, bad) => { msg.style.color = bad ? "var(--amber-text)" : "var(--ink-muted)"; msg.textContent = text; };
+  const useBtn = h("button", { class: "btn primary" }, "Use this folder");
   const save = async () => {
-    const r = await act("settings", { changes: { server_dir: dir.value.trim() } });
-    if (!r) return;
-    const s = await api("settings");
-    const probs = s.layout.problems || [];
-    if (probs.length) { msg.style.color = "var(--amber-text)"; msg.textContent = probs.join(" "); return; }
-    const java = s.java || {};
-    gate.remove();
-    toast("Server folder set", java.path && java.version >= 25 ? `Using Java ${java.version}. Press Start when you're ready.` : "Java 25 was not found yet: see Settings.", java.version >= 25 ? "info" : "warn", 9000);
-    window.orbis.openPanel("settings");
+    // "Copy as path" in Explorer wraps the path in quotes; a file path (HytaleServer.jar) is fine too.
+    let path = dir.value.trim().replace(/^"+|"+$/g, "").trim();
+    if (/hytaleserver\.jar$/i.test(path)) path = path.replace(/[\\/][^\\/]*$/, "");
+    if (!path) { say("Type or paste the folder path, or press Browse.", true); return; }
+    dir.value = path;
+    useBtn.disabled = true;
+    useBtn.textContent = "Checking...";
+    try {
+      const r = await api("settings", { changes: { server_dir: path } });
+      const s = await api("settings");
+      const probs = (s.layout && s.layout.problems) || [];
+      if (probs.length) { say(probs.join(" "), true); return; }
+      const java = s.java || {};
+      gate.remove();
+      const found = (r.imported || []).length ? ` Imported from your server: ${r.imported.slice(0, 4).join("; ")}.` : "";
+      toast("Server folder set", (java.path && java.version >= 25 ? `Using Java ${java.version}.` : "Java 25 was not found yet: see Settings.") + found + " Close the old start.bat window, then press Start.",
+        java.version >= 25 ? "info" : "warn", 15000);
+      window.orbis.openPanel("settings");
+    } catch (e) {
+      say(`That didn't work: ${e.message}`, true);
+    } finally {
+      useBtn.disabled = false;
+      useBtn.textContent = "Use this folder";
+    }
   };
+  useBtn.onclick = save;
   dir.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); });
+  const browse = h("button", { class: "btn", onclick: async () => {
+    const p = await pickServerFolder(dir.value.trim().replace(/^"+|"+$/g, ""));
+    if (p) { dir.value = p; save(); }
+  } }, icon("folder"), "Browse");
   const gate = h("div", { class: "gate" }, frame("box",
     h("img", { src: "img/mark-256.png", alt: "" }),
     h("h1", null, "Welcome to Orbis", h("span", { style: { color: "var(--fox)" } }, "Fox")),
     h("p", null, "Where is your Hytale server? Pick the folder that holds HytaleServer.jar (the Server folder of the download)."),
-    h("div", { class: "row" }, dir, LOCAL ? h("button", { class: "btn", onclick: async () => { const r = await act("pick-folder", { start: dir.value }); if (r && r.path) dir.value = r.path; } }, "Browse") : null),
+    h("div", { class: "row" }, dir, browse),
     msg,
     h("div", { class: "note warn" }, icon("info"), h("div", null, "OrbisFox runs the server itself from now on. Close the old server window (start.bat) before you press Start.")),
-    h("button", { class: "btn primary", onclick: save }, "Use this folder"),
+    useBtn,
     h("button", { class: "btn ghost sm", onclick: () => gate.remove() }, "Later")));
   document.body.append(gate);
   setTimeout(() => dir.focus(), 50);

@@ -23,6 +23,19 @@ to draw them.
   server's memory right now, a quick way to spot players spread out across the world.
 - **In a browser on the server PC:** *Open in browser* in the map window, or `http://127.0.0.1:8765/map/`.
 
+## Memories
+
+The same site has a **Memories** tab next to *Map*: how many creature memories the server has restored,
+every memory nobody has found yet with the zones, biomes and time of day the creature appears, and which
+players are carrying memories they haven't restored yet. It is read from the game's own files every
+couple of minutes (after the server saves), so it needs no plugin and costs the server nothing.
+
+Link straight to it with `?view=memories`, and pick the list with `&filter=missing`, `carried`,
+`restored` or `all`. With `overlay=1` the search box and footnote are hidden, which makes a tidy
+"memories left to find" panel for a stream.
+
+Turn the page off, or hide carriers' names, in *Settings → World map*.
+
 ## On another PC, a phone, or your stream
 
 1. *Settings → World map → Share the map on my network*, then **Save**.
@@ -44,6 +57,8 @@ Add a **Browser** source with the share link, plus options after `?` (join them 
 | `players=0` | hides player markers (to stop stream snipers seeing where you are) |
 | `world=name` | a specific world |
 | `refresh=120` | look for new tiles every 120 seconds (default 60) |
+| `view=memories` | open the Memories tab instead of the map |
+| `filter=missing` | which memories to list: `missing`, `carried`, `restored` or `all` |
 
 Example: `http://192.168.1.20:8767/?overlay=1&follow=Trey&zoom=0.8`
 
@@ -66,6 +81,7 @@ Don't forward the map port on your router as-is. Two easy options:
 index.html, livemap.js, livemap.css, fonts/, img/   the viewer (copied in by OrbisFox)
 worlds.json                                        worlds that have tiles
 players.json, status.json                          live extras, rewritten every 10 s
+memories.json                                      the Memories tab (only rewritten when it changes)
 <world>/index.json                                 list of region tiles
 <world>/1/<rx>_<rz>.png                            full detail (1 pixel per block)
 <world>/4/<rx>_<rz>.png, <world>/16/...            zoomed-out versions

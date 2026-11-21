@@ -1,4 +1,7 @@
-"""Tests for importing an existing server, Memories and operator vetoes.  python -m unittest"""
+"""Tests for importing an existing server, Memories, operator vetoes, the folder browser and self-update.
+
+python -m unittest
+"""
 import json
 import os
 import shutil
@@ -9,7 +12,7 @@ import types
 import unittest
 import zipfile
 
-from orbisfox import demo, importer
+from orbisfox import __version__, demo, fsbrowse, importer, selfupdate
 from orbisfox.memories import Memories, build_catalog
 from orbisfox.settings import Settings
 from orbisfox.veto import Vetoes
@@ -153,6 +156,89 @@ class Vetoing(unittest.TestCase):
         v.begin("update", 300, cancel=lambda: None)
         self.assertFalse(v.check_line("Console executed command: veto"))
         self.assertIsNotNone(v.active)
+
+
+class FolderBrowser(unittest.TestCase):
+    def test_lists_folders_and_spots_servers(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        sd = make_server(tmp)
+        os.makedirs(os.path.join(tmp, "Backups"))
+        d = fsbrowse.listdir(f'"{tmp}"')          # pasted with quotes
+        names = {f["name"]: f for f in d["folders"]}
+        self.assertTrue(names["game"]["server"])   # game/Server/HytaleServer.jar
+        self.assertEqual(names["game"]["version"], "0.7.7")
+        self.assertFalse(names["Backups"]["server"])
+        self.assertEqual(fsbrowse.listdir(sd)["server"]["server_dir"], sd)
+        self.assertEqual(fsbrowse.listdir(os.path.join(sd, "HytaleServer.jar"))["path"], sd)
+        with self.assertRaises(FileNotFoundError):
+            fsbrowse.listdir(os.path.join(tmp, "nope"))
+
+
+class SelfUpdate(unittest.TestCase):
+    def make(self, fetched):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        events = []
+        core = types.SimpleNamespace(
+            settings=Settings(os.path.join(tmp, "data", "s.json")), data_dir=os.path.join(tmp, "data"),
+            log_app=lambda *a, **k: None, toast=lambda *a, **k: events.append(a[0]),
+            hub=types.SimpleNamespace(publish=lambda k, d: None))
+        os.makedirs(core.data_dir)
+        real = selfupdate.net.fetch
+        selfupdate.net.fetch = lambda url, timeout=15: fetched(url)
+        self.addCleanup(setattr, selfupdate.net, "fetch", real)
+        return selfupdate.AppUpdates(core), core, tmp, events
+
+    def test_newer_version_on_main_is_offered_once(self):
+        up, _, _, events = self.make(lambda url: b"99.0.0\r\n")
+        info = up.check()
+        self.assertTrue(info["available"])
+        self.assertEqual(info["latest"], "99.0.0")
+        self.assertEqual(info["current"], __version__)
+        up.check()
+        self.assertEqual(len(events), 1)
+
+    def test_same_version_or_junk_is_not_an_update(self):
+        up, *_ = self.make(lambda url: __version__.encode())
+        self.assertFalse(up.check()["available"])
+        up, *_ = self.make(lambda url: b"<html>404</html>")
+        info = up.check()
+        self.assertFalse(info["available"])
+        self.assertIn("Could not check", info["error"])
+
+    def test_replacing_files_keeps_the_data_folder(self):
+        up, core, tmp, _ = self.make(lambda url: b"99.0.0")
+        app = os.path.join(tmp, "app")
+        os.makedirs(os.path.join(app, "orbisfox"))
+        os.makedirs(os.path.join(app, "data"))
+        for rel, text in (("orbisfox/__init__.py", "old"), ("README.md", "old"), ("data/settings.json", "mine")):
+            with open(os.path.join(app, rel), "w") as f:
+                f.write(text)
+        src = os.path.join(tmp, "release.zip")
+        with zipfile.ZipFile(src, "w") as z:
+            z.writestr("orbisfox-99.0.0/orbisfox/__init__.py", "new")
+            z.writestr("orbisfox-99.0.0/README.md", "new")
+            z.writestr("orbisfox-99.0.0/web/new.js", "new")
+            z.writestr("orbisfox-99.0.0/data/settings.json", "theirs")
+            z.writestr("../evil.txt", "nope")
+        real_dl, real_app = selfupdate.net.download, selfupdate.APP_DIR
+        selfupdate.net.download = lambda url, dest, **k: shutil.copy(src, dest)
+        selfupdate.APP_DIR = app
+        self.addCleanup(setattr, selfupdate.net, "download", real_dl)
+        self.addCleanup(setattr, selfupdate, "APP_DIR", real_app)
+        up.check()
+        up._replace_files()
+
+        def read(rel):
+            with open(os.path.join(app, rel)) as f:
+                return f.read()
+        self.assertEqual(read("orbisfox/__init__.py"), "new")
+        self.assertEqual(read("README.md"), "new")
+        self.assertEqual(read("web/new.js"), "new")
+        self.assertEqual(read("data/settings.json"), "mine")
+        self.assertFalse(os.path.exists(os.path.join(tmp, "evil.txt")))
+        self.assertFalse(os.path.exists(os.path.join(core.data_dir, "update")))
 
 
 if __name__ == "__main__":

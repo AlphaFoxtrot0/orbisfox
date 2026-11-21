@@ -5,8 +5,9 @@ export const S = {
   connected: false,
   app: {}, settings: {}, server: {}, console: [], players: { online: [] },
   metrics: { latest: {}, history: [] }, watchdog: {}, backups: { list: [], builtin: [] },
-  updates: {}, access: { whitelist: { entries: [] }, ops: [], bans: [] }, catalog: [], gc: {},
+  updates: {}, access: { whitelist: { entries: [] }, ops: [], bans: [] }, catalog: [], gc: {}, appupdate: {},
 };
+let seenVersion = null;
 
 const subs = {};
 export function on(kind, fn) { (subs[kind] ||= []).push(fn); return () => { subs[kind] = subs[kind].filter((f) => f !== fn); }; }
@@ -23,8 +24,10 @@ export function connect() {
     Object.assign(S, {
       app: d.app, settings: d.settings, server: d.server, console: d.console, players: d.players,
       metrics: d.metrics, watchdog: d.watchdog, backups: d.backups, updates: d.updates, access: d.access,
-      catalog: d.catalog,
+      catalog: d.catalog, appupdate: d.appupdate || {},
     });
+    if (seenVersion && d.app.version !== seenVersion) toast(`OrbisFox updated to ${d.app.version}`, "Your settings, backups and stats came along.", "info", 10000);
+    seenVersion = d.app.version;
     S.connected = true;
     retry = 1000;
     emit("snapshot", d);
@@ -51,7 +54,7 @@ export function connect() {
   es.addEventListener("updates", (e) => { S.updates = JSON.parse(e.data); emit("updates", S.updates); });
   es.addEventListener("access", (e) => { S.access = JSON.parse(e.data); emit("access", S.access); });
   es.addEventListener("watchdog", (e) => { S.watchdog = JSON.parse(e.data); emit("watchdog", S.watchdog); });
-  es.addEventListener("memories", (e) => emit("memories", JSON.parse(e.data)));
+  es.addEventListener("appupdate", (e) => { S.appupdate = JSON.parse(e.data); emit("appupdate", S.appupdate); });
   es.addEventListener("settings", (e) => { S.settings = JSON.parse(e.data); emit("settings", S.settings); });
   es.addEventListener("toast", (e) => { const t = JSON.parse(e.data); toast(t.title, t.body, t.level, t.ms); });
   es.onerror = () => {

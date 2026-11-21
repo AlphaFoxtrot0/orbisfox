@@ -407,29 +407,22 @@ def open_folder(core, body, query):
     core.open_path(paths[which])
 
 
-@r.post("/api/pick-folder")
-def pick_folder(core, body, query):
-    """Shows a folder picker on the server PC (Windows)."""
-    if not _q(query, "_local") or os.name != "nt":
-        raise ApiError(403, "Type the folder path instead.")
-    import subprocess
-    ps = ("Add-Type -AssemblyName System.Windows.Forms;"
-          "$o=New-Object System.Windows.Forms.Form -Property @{TopMost=$true;ShowInTaskbar=$false};"
-          "$d=New-Object System.Windows.Forms.FolderBrowserDialog;"
-          "$d.Description='Pick the folder that holds HytaleServer.jar';$d.ShowNewFolderButton=$false;"
-          "if($env:OF_START -and (Test-Path $env:OF_START)){$d.SelectedPath=$env:OF_START};"
-          "if($d.ShowDialog($o) -eq 'OK'){[Console]::Out.Write($d.SelectedPath)}")
-    env = dict(os.environ, OF_START=str(body.get("start") or ""))
-    out = subprocess.run(["powershell", "-NoProfile", "-STA", "-NonInteractive", "-Command", ps], env=env,
-                         capture_output=True, text=True, timeout=600, creationflags=0x08000000)
-    path = out.stdout.strip()
-    return {"path": path or None}
+@r.get("/api/fs/list")
+def fs_list(core, body, query):
+    from . import fsbrowse
+    return fsbrowse.listdir(_q(query, "path", ""))
+
+
+@r.get("/api/fs/find")
+def fs_find(core, body, query):
+    from . import fsbrowse
+    return fsbrowse.find_servers()
 
 
 # ------------------------------------------------------------------------------- settings
 SETTINGS_KEYS = {"server_dir", "java", "bind", "ram_min_gb", "ram_max_gb", "aot_cache", "gc_log", "exit_on_oom",
                  "jvm_args", "server_args", "auto_start", "auto_restart", "stop_timeout_s", "backups", "restarts",
-                 "watchdog", "updates", "panel", "plugin_port", "start_with_windows", "track_gpu", "veto", "map",
+                 "watchdog", "updates", "panel", "plugin_port", "start_with_windows", "track_gpu", "veto", "map", "window", "app_updates",
                  "assets"}
 
 
@@ -456,6 +449,7 @@ def settings_save(core, body, query):
         if lay["jar"]:
             changes["server_dir"] = lay["server_dir"]
     old_sw = core.settings["start_with_windows"]
+    old_panel = {k: core.settings["panel"].get(k) for k in ("port", "lan")}
     old_dir = hytale.locate(core.settings["server_dir"])["server_dir"]
     core.settings.update(changes)
     if "start_with_windows" in changes and changes["start_with_windows"] != old_sw:
@@ -464,11 +458,12 @@ def settings_save(core, body, query):
     imported = []
     if "map" in changes:
         core.worldmap.start_share()
-    if "server_dir" in changes and hytale.locate(changes["server_dir"])["jar"] and             os.path.normcase(changes["server_dir"]) != os.path.normcase(old_dir or ""):
+    new_dir = changes.get("server_dir")
+    if new_dir and hytale.locate(new_dir)["jar"] and os.path.normcase(new_dir) != os.path.normcase(old_dir or ""):
         imported = core.import_server(changes["server_dir"])
     core.hub.publish("settings", core.settings.public())
     core.publish_server()
-    restart_panel = "panel" in changes
+    restart_panel = any(core.settings["panel"].get(k) != v for k, v in old_panel.items())
     return {"settings": core.settings.public(), "panel_restart_needed": restart_panel, "imported": imported}
 
 
@@ -488,6 +483,16 @@ def settings_password(core, body, query):
     h, salt = hash_password(pw)
     core.settings.update({"panel": {"password_hash": h, "salt": salt}})
     return {"ok": True}
+
+
+@r.post("/api/app/check-update")
+def app_check_update(core, body, query):
+    return core.appupdates.check()
+
+
+@r.post("/api/app/update")
+def app_update(core, body, query):
+    core.appupdates.install(warn=body.get("warn", True) is not False)
 
 
 @r.post("/api/app/quit")

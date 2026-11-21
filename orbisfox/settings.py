@@ -77,6 +77,7 @@ DEFAULTS = {
         "salt": "",
     },
     "start_with_windows": False,
+    "window": "app",           # "app" (chromeless window), "browser" (normal tab) or "none"
     "track_gpu": False,        # GPU counters cost a little CPU; the server itself doesn't render
     # --- explored-world map (tiles come from the OrbisFox Bridge plugin) -------------------------------
     "map": {
@@ -85,7 +86,15 @@ DEFAULTS = {
         "port": 8767,
         "key": "",                 # optional: viewers need ?key=... in the link
         "show_players": True,      # player markers on the map
+        "show_memories": True,     # the Memories page next to the map
+        "show_memory_carriers": True,   # who is carrying which memory
         "backfill": False,         # fill in old areas slowly while nobody is online (the server loads them)
+    },
+    # --- OrbisFox updating itself from GitHub ------------------------------------------------------
+    "app_updates": {
+        "check_every_hours": 6,
+        "auto": "off",             # "off" (ask in the panel) or "empty" (install when nobody is online)
+        "repo": "AlphaFoxtrot0/orbisfox",
     },
     "plugin_port": 8766,       # where the OrbisFox companion plugin reports (localhost only)
     "player_names": {},        # uuid -> last known name (filled in as players are seen)

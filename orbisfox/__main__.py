@@ -38,6 +38,7 @@ def main(argv=None):
     ap.add_argument("--data", help="data folder (default: ./data)")
     ap.add_argument("--demo", action="store_true",
                     help="try OrbisFox with a pretend server (separate data folder, port 8770)")
+    ap.add_argument("--after-update", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--install-shortcuts", action="store_true")
     ap.add_argument("--remove-shortcuts", action="store_true")
     ap.add_argument("--version", action="version", version=f"OrbisFox {__version__}")
@@ -65,6 +66,13 @@ def main(argv=None):
     port = args.port or int(Settings(os.path.join(data_dir, "settings.json"))["panel"].get("port", 8765))
     show = not (args.background or args.no_window)
     url = f"http://127.0.0.1:{port}/"
+    if args.after_update:
+        # The old OrbisFox is still shutting down: wait for it to let go of the port.
+        import time
+        for _ in range(60):
+            if not _running_instance(port):
+                break
+            time.sleep(0.5)
     if _running_instance(port):
         if show:
             desktop.open_window(url, data_dir)
@@ -83,7 +91,10 @@ def main(argv=None):
         print(f"OrbisFox could not open port {port}: {e}", file=sys.stderr)
         return 1
     core.log_app(f"OrbisFox {__version__} is running at {url}" + (" (also on your network)" if lan else ""))
+    core.argv = list(argv if argv is not None else sys.argv[1:])
     core.start_threads()
+    from .selfupdate import resume_server_if_asked
+    threading.Thread(target=resume_server_if_asked, args=(core,), daemon=True).start()
     if show:
         desktop.open_window(url, data_dir)
     else:

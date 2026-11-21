@@ -3,36 +3,63 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 import webbrowser
 
-from .settings import APP_DIR, DATA_DIR
+from .settings import APP_DIR, DATA_DIR, Settings
 
 NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 ICON = os.path.join(APP_DIR, "assets", "orbisfox.ico")
 
 
 def _browser():
-    """Edge (on every Windows 11 PC) or Chrome, for a chromeless app window."""
-    cands = []
+    """Chrome if installed (already set up on most PCs, and it honours --no-first-run), else Edge,
+    for a chromeless app window."""
+    chrome, edge = [], []
     if os.name == "nt":
-        for base in (os.environ.get("ProgramFiles(x86)"), os.environ.get("ProgramFiles"), os.environ.get("LOCALAPPDATA")):
+        for base in (os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)"), os.environ.get("LOCALAPPDATA")):
             if base:
-                cands += [os.path.join(base, "Microsoft", "Edge", "Application", "msedge.exe"),
-                          os.path.join(base, "Google", "Chrome", "Application", "chrome.exe")]
+                chrome.append(os.path.join(base, "Google", "Chrome", "Application", "chrome.exe"))
+                edge.append(os.path.join(base, "Microsoft", "Edge", "Application", "msedge.exe"))
     else:
-        cands += [shutil.which(n) for n in ("microsoft-edge", "google-chrome", "chromium", "chromium-browser")]
-    return next((c for c in cands if c and os.path.isfile(c)), None)
+        chrome += [shutil.which(n) for n in ("google-chrome", "chromium", "chromium-browser")]
+        edge += [shutil.which("microsoft-edge")]
+    return next((c for c in chrome + edge if c and os.path.isfile(c)), None)
 
 
 def open_window(url, data_dir=None):
-    exe = _browser()
+    """Opens the panel. Settings "window": "app" (default, a chromeless browser window), "browser"
+    (a tab in your normal browser). Use --background to start without a window. Repeat requests
+    within a few seconds are ignored, so double-clicking the shortcut doesn't stack windows."""
+    data_dir = data_dir or DATA_DIR
+    mode = Settings(os.path.join(data_dir, "settings.json")).get("window", "app")
+    stamp = os.path.join(data_dir, "window.opened")
+    try:
+        if time.time() - os.path.getmtime(stamp) < 6:
+            return
+    except OSError:
+        pass
+    try:
+        os.makedirs(data_dir, exist_ok=True)
+        with open(stamp, "w") as f:
+            f.write(str(time.time()))
+    except OSError:
+        pass
+    exe = _browser() if mode == "app" else None
     if not exe:
         webbrowser.open(url)
         return
-    profile = os.path.join(data_dir or DATA_DIR, "window")
+    profile = os.path.join(data_dir, "window")
     os.makedirs(profile, exist_ok=True)
+    # A "First Run" file tells Chromium-based browsers this profile is already set up, so they skip
+    # their welcome and sign-in windows.
+    try:
+        open(os.path.join(profile, "First Run"), "a").close()
+    except OSError:
+        pass
     subprocess.Popen([exe, f"--app={url}", f"--user-data-dir={profile}", "--window-size=1500,940",
-                      "--no-first-run", "--no-default-browser-check", "--disable-features=Translate"],
+                      "--no-first-run", "--no-default-browser-check", "--disable-sync", "--disable-features=Translate",
+                      "--hide-crash-restore-bubble"],
                      creationflags=NO_WINDOW, close_fds=True)
 
 

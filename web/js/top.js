@@ -35,6 +35,7 @@ export function mountTop(root, openPanel) {
   on("players", renderVitals);
   on("backups", renderVitals);
   on("updates", renderNotices);
+  on("appupdate", renderNotices);
   on("watchdog", renderNotices);
   on("connection", (ok) => { renderStatus(); if (!ok) renderNotices(); });
   setInterval(() => { renderStatus(); renderVitals(); if (S.server.pending) renderNotices(); }, 1000);
@@ -226,6 +227,33 @@ export function renderNotices() {
       out.push(notice("info", "download", "Installing the server update", step ? `${step.label}...` : "Working...",
         [h("button", { class: "btn sm", onclick: () => window.orbis.openPanel("updates") }, "Progress")]));
     }
+    const au = S.appupdate || {};
+    if (au.busy) {
+      out.push(notice("info", "download", `Updating OrbisFox to ${au.latest}`, au.message || "Working...",
+        []));
+    } else if (au.available) {
+      const failed = (au.message || "").startsWith("Update failed");
+      const ready = au.installed && au.installed === au.latest;
+      out.push(notice(failed ? "bad" : "info", "download", ready ? `OrbisFox ${au.latest} is installed` : `OrbisFox ${au.latest} is available`,
+        failed ? au.message : ready ? "Restart OrbisFox to start using it." : `You have ${au.current}. Your settings, backups and stats are kept.`,
+        [h("a", { class: "btn sm", href: `https://github.com/${au.repo}/releases`, target: "_blank", rel: "noopener" }, "What's new"),
+          h("button", { class: "btn sm cyan", onclick: appUpdateFlow }, failed ? "Try again" : ready ? "Restart OrbisFox" : "Update OrbisFox")]));
+    }
   }
   clear(notices, out);
+}
+
+async function appUpdateFlow() {
+  const au = S.appupdate || {};
+  const online = (S.players.online || []).length;
+  const ready = au.installed && au.installed === au.latest;
+  let body = ready ? "OrbisFox restarts on the new version, which takes a few seconds. "
+    : "OrbisFox downloads the new version and restarts itself, which takes a few seconds. ";
+  if (isAlive()) {
+    body += online
+      ? `The Hytale server is stopped first (the ${online} player${online > 1 ? "s" : ""} online get a 1-minute warning) and started again right after. `
+      : "The Hytale server is stopped first and started again right after. Nobody is online, so there's no warning. ";
+  }
+  body += "Your settings, backups and stats are kept.";
+  if (await confirmBox(ready ? "Restart OrbisFox now?" : `Update OrbisFox to ${au.latest}?`, body, ready ? "Restart now" : "Update now")) act("app/update", { warn: true });
 }
