@@ -30,7 +30,7 @@ def state(core, body, query):
 def server_start(core, body, query):
     if core.orphan:
         raise ApiError(409, "A server from an earlier OrbisFox session is still running. Stop it first.")
-    core.server.start("started from the panel")
+    core.server.start("started from the panel", force=bool(body.get("force")))
 
 
 @r.post("/api/server/stop")
@@ -288,7 +288,7 @@ def updates_check(core, body, query):
 
 @r.post("/api/updates/install")
 def updates_install(core, body, query):
-    core.updates.install(body.get("method") or "auto")
+    core.updates.install(body.get("method") or "auto", warn=body.get("warn", True) is not False)
 
 
 @r.post("/api/updates/get-downloader")
@@ -322,32 +322,20 @@ def perf_apply(core, body, query):
 # ------------------------------------------------------------------------------- map
 @r.get("/api/map/chunks")
 def map_chunks(core, body, query):
-    world = _q(query, "world", "")
-    if core.bridge.connected:
-        data = core.bridge.chunks(world)
-        data["source"] = "bridge"
-        return data
-    # Without the plugin: estimate from where players are and the view distance.
-    sd = core.server_dir()
-    cfg = hytale.read_config(sd) if sd else {}
-    radius = core.watchdog.current_radius or cfg.get("MaxViewRadius") or 12
-    pts = []
-    for p in core.players.online_list():
-        if p.get("x") is not None:
-            pts.append({"name": p["name"], "world": p.get("world"), "x": p["x"], "z": p["z"]})
-    if not pts:
-        for u, info in hytale.read_players(sd).items() if sd else []:
-            o = core.players.online.get(u)
-            if o and info.get("x") is not None:
-                pts.append({"name": o["name"], "world": info.get("world"), "x": info["x"], "z": info["z"],
-                            "stale": True})
-    return {"source": "estimate", "radius": radius, "players": pts, "chunks": [], "chunk_size": 32}
+    """Chunks in memory right now (the 'Loaded chunks' overlay). Needs the OrbisFox Bridge plugin."""
+    if not core.bridge.connected:
+        raise ApiError(409, "The loaded-chunk overlay needs the OrbisFox Bridge plugin and a running server.")
+    return core.bridge.chunks(_q(query, "world", ""))
 
 
-@r.get("/api/map/tile")
-def map_tile(core, body, query):
-    data = core.bridge.tile(_q(query, "world", ""), int(_q(query, "x", 0)), int(_q(query, "z", 0)))
-    return ("bytes", data, "image/png")
+@r.get("/api/map/info")
+def map_info(core, body, query):
+    return core.worldmap.info()
+
+
+@r.get("/api/memories")
+def memories(core, body, query):
+    return core.memories.view()
 
 
 @r.post("/api/bridge/install")
@@ -412,7 +400,7 @@ def open_folder(core, body, query):
     which = body.get("which")
     sd = core.server_dir()
     paths = {"server": sd, "logs": sd and os.path.join(sd, "logs"), "mods": sd and os.path.join(sd, "mods"),
-             "backups": core.backups.dir, "data": core.data_dir,
+             "backups": core.backups.dir, "data": core.data_dir, "map": core.worldmap.dir,
              "builtin-backups": sd and os.path.join(sd, core.settings["backups"].get("hytale_dir") or "backups")}
     if which not in paths:
         raise ValueError("Unknown folder.")
@@ -441,7 +429,8 @@ def pick_folder(core, body, query):
 # ------------------------------------------------------------------------------- settings
 SETTINGS_KEYS = {"server_dir", "java", "bind", "ram_min_gb", "ram_max_gb", "aot_cache", "gc_log", "exit_on_oom",
                  "jvm_args", "server_args", "auto_start", "auto_restart", "stop_timeout_s", "backups", "restarts",
-                 "watchdog", "updates", "panel", "plugin_port", "start_with_windows"}
+                 "watchdog", "updates", "panel", "plugin_port", "start_with_windows", "track_gpu", "veto", "map",
+                 "assets"}
 
 
 @r.get("/api/settings")
@@ -467,17 +456,28 @@ def settings_save(core, body, query):
         if lay["jar"]:
             changes["server_dir"] = lay["server_dir"]
     old_sw = core.settings["start_with_windows"]
+    old_dir = hytale.locate(core.settings["server_dir"])["server_dir"]
     core.settings.update(changes)
     if "start_with_windows" in changes and changes["start_with_windows"] != old_sw:
         from . import desktop
         desktop.set_startup(bool(changes["start_with_windows"]))
-    if "server_dir" in changes:
-        core.players.scan_files()
-        core._access = None
+    imported = []
+    if "map" in changes:
+        core.worldmap.start_share()
+    if "server_dir" in changes and hytale.locate(changes["server_dir"])["jar"] and             os.path.normcase(changes["server_dir"]) != os.path.normcase(old_dir or ""):
+        imported = core.import_server(changes["server_dir"])
     core.hub.publish("settings", core.settings.public())
     core.publish_server()
     restart_panel = "panel" in changes
-    return {"settings": core.settings.public(), "panel_restart_needed": restart_panel}
+    return {"settings": core.settings.public(), "panel_restart_needed": restart_panel, "imported": imported}
+
+
+@r.post("/api/settings/import")
+def settings_import(core, body, query):
+    sd = core.server_dir()
+    if not sd:
+        raise ApiError(409, "Set the server folder first.")
+    return {"imported": core.import_server(sd)}
 
 
 @r.post("/api/settings/password")

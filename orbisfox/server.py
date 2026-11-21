@@ -33,6 +33,7 @@ class Supervisor:
         self._crashes = []           # times of recent crashes, for crash-loop protection
         self.last_error = None
         self.launch_info = None
+        self.other_servers = []      # Hytale servers OrbisFox didn't start (e.g. an old start.bat window)
 
     # ----------------------------------------------------------------------------- state
     @property
@@ -70,14 +71,19 @@ class Supervisor:
             raise RuntimeError(f"Hytale needs Java 25, but the Java found is version {major} ({java}). "
                                "Install Java 25 or set its path in Settings.")
         sd = lay["server_dir"]
+        if s.get("assets") and os.path.isfile(s["assets"]):
+            lay["assets"] = s["assets"]
         args = jvm.java_cmd(java)
+        file_opts = []
         if lay["jvm_options"]:
             args.append("@" + lay["jvm_options"])
+            file_opts = jvm.read_options_file(lay["jvm_options"])
         lo, hi = float(s["ram_min_gb"]), float(s["ram_max_gb"])
         lo = min(lo, hi)
         args += [f"-Xms{int(lo * 1024)}M", f"-Xmx{int(hi * 1024)}M"]
         user_jvm = shlex.split(s["jvm_args"], posix=os.name != "nt") if s["jvm_args"].strip() else []
-        if not any(a.startswith(("-XX:+Use", "-XX:-Use")) and "GC" in a for a in user_jvm):
+        # Adding G1 next to a collector chosen elsewhere would stop Java from starting.
+        if not any(a.startswith(("-XX:+Use", "-XX:-Use")) and "GC" in a for a in user_jvm + file_opts):
             args += ["-XX:+UseG1GC", "-XX:MaxGCPauseMillis=200"]
         if s["exit_on_oom"]:
             args.append("-XX:+ExitOnOutOfMemoryError")
@@ -105,11 +111,20 @@ class Supervisor:
             args += shlex.split(s["server_args"], posix=os.name != "nt")
         return args, lay, hi
 
-    def start(self, reason="manual"):
+    def start(self, reason="manual", force=False):
         with self._lock:
             if self.alive:
                 raise RuntimeError("The server is already running.")
             self.last_error = None
+            self.other_servers = [] if force else find_other_servers(self.core.server_dir())
+            if self.other_servers:
+                o = self.other_servers[0]
+                self.last_error = (f"Another Hytale server is already running on this PC (process {o['pid']}), probably "
+                                   "from the old start.bat window. Close it first: two servers on the same world can "
+                                   "damage it. If it is a different server, use Start anyway.")
+                self.core.publish_server()
+                raise RuntimeError(self.last_error)
+            self.core.take_over_server_updates()
             try:
                 args, lay, heap_gb = self.build_command()
             except RuntimeError as e:
@@ -120,6 +135,10 @@ class Supervisor:
             env = dict(os.environ)
             env["ORBISFOX_BRIDGE_PORT"] = str(self.core.settings["plugin_port"])
             env["ORBISFOX_BRIDGE_TOKEN"] = self.core.bridge.token
+            mp = self.core.settings.get("map", {})
+            env["ORBISFOX_MAP_DIR"] = self.core.map_dir()
+            env["ORBISFOX_MAP_BACKFILL"] = "1" if mp.get("backfill", False) else "0"
+            env["ORBISFOX_VETO_COMMAND"] = self.core.settings.get("veto", {}).get("command", "veto")
             self.exit_code = None
             self.ready_at = None
             self.started_at = time.time()
@@ -310,31 +329,44 @@ class Supervisor:
             pass
 
     # ----------------------------------------------------------------------------- countdowns
-    def schedule(self, action, seconds, reason, message=None):
-        """Stop or restart after warning the players. seconds=0 acts now."""
+    def schedule(self, action, seconds, reason, message=None, kind=None):
+        """Stop or restart after warning the players. seconds=0 acts now.
+
+        `kind` marks an automated action ("daily", "watchdog", "update"): operators in game can veto
+        it, and after a veto it is refused until its cool-down ends. Returns False when refused.
+        Nobody online means no warnings and no veto window: it acts at once."""
         if action not in ("stop", "restart"):
             raise ValueError("Unknown action.")
+        if kind and self.core.vetoes.blocked(kind):
+            return False
         if seconds <= 0 or not self.running or not self.core.players.online:
             self.stop(reason, restart=action == "restart")
-            return
+            return True
         self.cancel_pending(quiet=True)
         cancel = threading.Event()
         self._pending_cancel = cancel
         at = time.time() + seconds
-        self.pending = {"action": action, "at": at, "reason": reason}
+        self.pending = {"action": action, "at": at, "reason": reason, "kind": kind,
+                        "vetoable": bool(kind and self.core.vetoes.enabled)}
+        if kind:
+            self.core.vetoes.begin(kind, seconds, cancel=lambda: self.cancel_pending(quiet=True), reason=reason)
         self.core.publish_server()
         verb = "restarting" if action == "restart" else "shutting down"
         tmpl = message or ("Server " + verb + " in {time}.")
         self.core.log_app(f"Server {verb} in {seconds} s ({reason}).")
-        threading.Thread(target=self._countdown, args=(action, at, reason, tmpl, cancel), daemon=True).start()
+        threading.Thread(target=self._countdown, args=(action, at, reason, tmpl, cancel, kind), daemon=True).start()
+        return True
 
-    def _countdown(self, action, at, reason, tmpl, cancel):
+    def _countdown(self, action, at, reason, tmpl, cancel, kind=None):
         marks = [600, 300, 120, 60, 30, 10, 5, 4, 3, 2, 1]
         total = at - time.time()
         warned = set(m for m in marks if m > total + 1)
         while not cancel.is_set():
             left = at - time.time()
             if left <= 0:
+                break
+            if not self.core.players.online:
+                self.core.log_app("Everyone has left: not waiting for the countdown.")
                 break
             for m in marks:
                 if m not in warned and left <= m + 0.5:
@@ -347,6 +379,8 @@ class Supervisor:
                         except (RuntimeError, ValueError):
                             pass
             cancel.wait(0.25)
+        if kind:
+            self.core.vetoes.end(kind)
         if cancel.is_set():
             return
         self.pending = None
@@ -359,6 +393,8 @@ class Supervisor:
             self._pending_cancel = None
             had = self.pending
             self.pending = None
+            if had and had.get("kind"):
+                self.core.vetoes.end(had["kind"])
             self.core.publish_server()
             if had and not quiet:
                 self.core.log_app(f"Cancelled the scheduled {had['action']}.")
@@ -371,3 +407,34 @@ class Supervisor:
 
 def which(name):
     return shutil.which(name)
+
+
+def find_other_servers(server_dir=None):
+    """Java processes running HytaleServer.jar that OrbisFox did not start: [{pid, command}]."""
+    out = []
+    try:
+        if os.name == "nt":
+            ps = ("Get-CimInstance Win32_Process -Filter \"Name='java.exe' or Name='javaw.exe'\" | "
+                  "Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress")
+            r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                               capture_output=True, text=True, timeout=20, creationflags=NO_WINDOW)
+            import json
+            data = json.loads(r.stdout or "[]")
+            for p in data if isinstance(data, list) else [data]:
+                cmd = p.get("CommandLine") or ""
+                if "hytaleserver.jar" in cmd.lower():
+                    out.append({"pid": p.get("ProcessId"), "command": cmd[:300]})
+        else:
+            for pid in os.listdir("/proc"):
+                if not pid.isdigit():
+                    continue
+                try:
+                    with open(f"/proc/{pid}/cmdline", "rb") as f:
+                        cmd = f.read().replace(b"\x00", b" ").decode("utf-8", "replace")
+                except OSError:
+                    continue
+                if "java" in cmd and "HytaleServer.jar" in cmd:
+                    out.append({"pid": int(pid), "command": cmd[:300]})
+    except Exception:  # noqa: BLE001 - detection is a safety net, never a blocker by itself
+        return []
+    return out

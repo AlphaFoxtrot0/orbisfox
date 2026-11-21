@@ -80,19 +80,26 @@ pre-release channel to get it early, or wait for the release.
 2. **Critical** (heap at least 92% full after collection, at least 40% of time in GC, a world thread
    stuck, or many ticks over a second): OrbisFox asks the server to **unload chunks nobody needs**
    (`chunk unload`).
-3. **Still critical for 2 minutes:** OrbisFox **warns the players and restarts the server**, after
-   saving the world. If a world is completely stuck it restarts immediately. It restarts at most
+3. **Still critical for 2 minutes:** OrbisFox **warns the players (60 seconds) and restarts the
+   server**, after saving the world. Operators online can `/veto` it. It restarts at most
    once per 15 minutes and at most 3 times an hour. After that it alerts you instead.
 
 Every threshold can be changed in Settings → Watchdog. Each step is logged in the console and in
 Performance → Watchdog.
 
-### Seeing it: the chunk map
+### Seeing it: the loaded-chunks overlay
 
-The **Chunk map** shows every loaded chunk, drawn with the server's own map imagery, grouped into
-separate **areas**. When the server struggles you will usually see several large, separate areas,
-one per wandering player, plus amber chunks still being generated. Once you can see it, you can do
-something about it: ask players to regroup, lower the view distance, or press *Unload idle chunks*.
+Open the **World map** and tick **Loaded chunks**. It shows every chunk currently in the server's
+memory on top of the explored map. When the server struggles you will usually see several large,
+separate patches, one per wandering player. Once you can see it, you can do something about it: ask
+players to regroup, lower the view distance, or press *Unload idle chunks*.
+
+### Operators can say no
+
+Every automatic recovery restart (and scheduled restart, and automatic update) is announced privately to
+operators who are online, and they can type `/veto` to cancel it, for example while fighting a boss.
+OrbisFox then leaves that kind of action alone for 5 minutes (adjustable in Settings) before trying
+again. With nobody online there is no warning and no wait.
 
 ## Other things that help
 

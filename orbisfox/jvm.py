@@ -122,6 +122,20 @@ class GcMonitor:
         return out
 
 
+def read_options_file(path):
+    """Arguments in a jvm.options file (one per line, # comments), as Java reads @-files."""
+    args = []
+    try:
+        with open(path, encoding="utf-8-sig", errors="replace") as f:
+            for line in f:
+                line = line.split("#", 1)[0].strip()
+                if line:
+                    args += line.split()
+    except OSError:
+        pass
+    return args
+
+
 def java_cmd(java):
     """The argv prefix that runs `java`. A .py path is the demo server, run with this Python."""
     if java and java.lower().endswith(".py"):

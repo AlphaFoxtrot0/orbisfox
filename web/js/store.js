@@ -51,6 +51,7 @@ export function connect() {
   es.addEventListener("updates", (e) => { S.updates = JSON.parse(e.data); emit("updates", S.updates); });
   es.addEventListener("access", (e) => { S.access = JSON.parse(e.data); emit("access", S.access); });
   es.addEventListener("watchdog", (e) => { S.watchdog = JSON.parse(e.data); emit("watchdog", S.watchdog); });
+  es.addEventListener("memories", (e) => emit("memories", JSON.parse(e.data)));
   es.addEventListener("settings", (e) => { S.settings = JSON.parse(e.data); emit("settings", S.settings); });
   es.addEventListener("toast", (e) => { const t = JSON.parse(e.data); toast(t.title, t.body, t.level, t.ms); });
   es.onerror = () => {

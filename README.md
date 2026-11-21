@@ -28,7 +28,16 @@ app window) and on Linux (open it in a browser).
 - Start, stop and **restart** without closing the window, optionally after warning players (1 or 5 minutes)
 - Force stop for a hung server; automatic restart after a crash (with crash-loop protection)
 - Daily scheduled restarts with countdown warnings
+- **Nobody online, no waiting:** every warning countdown is skipped when the server is empty, and a
+  countdown finishes early if everyone leaves
+- **Operators can veto** anything OrbisFox does on its own that would take the server down (scheduled
+  restarts, watchdog recovery restarts, automatic updates): operators online get a private message and
+  type **`/veto`** to cancel. That kind of action then waits 5 minutes (adjustable) before trying again
 - Signs the server in to Hytale: shows the device code to enter when the server asks
+- **Drop in an existing server:** OrbisFox reads its `start.bat`/`start.sh` (or any script that runs
+  `HytaleServer.jar`), `jvm.options` and `config.json`, and starts it the same way: Java, memory, JVM flags,
+  server options, port, backup and update settings. It refuses to start a second copy while the old
+  start.bat window is still running it
 
 **Players**
 - Online players with **ping**, world, position and session time
@@ -55,17 +64,27 @@ app window) and on Linux (open it in a browser).
 - **Installs it for you:** backs up, warns players, applies the update, restarts. It uses the server's
   built-in updater when the server is running, or Hytale's official downloader when it is stopped.
   Your world, settings and mods are never touched.
-- Release or pre-release channel; optional automatic install when nobody is online
+- Install with a 1-minute warning, or **install now** without one
+- Release or pre-release channel; automatic installs when nobody is online, or even with players on
+  (5-minute warning, operators can `/veto`)
 
 **Performance**
-- CPU, GPU and memory of the server process and of the whole PC; Java heap after garbage collection;
-  time spent in GC; tick rate per world; loaded chunks
+- CPU and memory of the server process and of the whole PC (GPU optional); Java heap after garbage
+  collection; time spent in GC; tick rate per world; loaded chunks
 - Plain-language suggestions with an **Apply** button (memory size, view distance, safety options)
 - **Watchdog** for the "too many chunks" freeze (see below)
 
-**Chunk map**
-- Every loaded chunk, drawn with the server's own map imagery, grouped into separate areas, with
-  players, spawn, and chunks still generating. Pan and zoom.
+**World map**
+- Everything players have explored, drawn from the in-game map the server already makes, so it costs the
+  server nothing. Your browser does the drawing
+- Players on the map, plus a **Loaded chunks** overlay that shows where the server's memory is going
+- **Share it** read-only on your network for a second screen, a phone or **OBS** (`&overlay=1`), or upload
+  the map folder to any static web host. See [docs/world-map.md](docs/world-map.md)
+
+**Memories**
+- How many creature memories the server has restored, which players are carrying which (and where they
+  found them), and every memory nobody has found yet, with the **zones and biomes** the creature lives
+  in, day or night, and whether you must defeat it. Read straight from the game files, no plugin needed
 
 **Also**
 - Mods: list, enable and disable; past server logs viewer
@@ -84,13 +103,15 @@ finds trouble it steps in gently, in this order:
 
 1. Lowers the view distance while memory is tight, then raises it back once things are calm.
 2. Asks the server to unload chunks nobody needs.
-3. Warns players and restarts, if nothing else helps.
+3. Warns players and restarts, if nothing else helps. Operators online can `/veto` it.
 
 The full explanation, with what Hytale itself has fixed so far, is in
 **[docs/chunk-freeze.md](docs/chunk-freeze.md)**.
 
-<p align="center"><img src="docs/img/map.png" width="49%" alt="Chunk map: loaded chunks drawn as terrain, players, spawn and a list of loaded areas">
+<p align="center"><img src="docs/img/map.png" width="49%" alt="World map: explored terrain with player markers, and buttons to share the map">
 <img src="docs/img/performance.png" width="49%" alt="Performance panel: health, heap after garbage collection, time in GC, loaded chunks, CPU and memory charts"></p>
+
+<p align="center"><img src="docs/img/memories.png" width="80%" alt="Memories panel: restored count, filters, and missing creatures grouped by category with their zones, biomes and time of day"></p>
 
 ## Getting started (Windows)
 
@@ -100,7 +121,9 @@ The full explanation, with what Hytale itself has fixed so far, is in
    as `C:\OrbisFox`, or `git clone` it.
 3. Run **`Install.bat`** to add desktop and Start menu shortcuts, then open **OrbisFox**.
 4. Pick your server folder: the one that holds `HytaleServer.jar` (the `Server` folder of the
-   official download). **Close the old server window (start.bat) first**, then press **Start**.
+   official download). OrbisFox imports your existing setup from `start.bat`, `jvm.options` and
+   `config.json` and shows what it found in Settings. **Close the old server window (start.bat)
+   first**, then press **Start**.
 5. Optional: open *Mods and logs* and press **Install plugin** to add the OrbisFox Bridge plugin,
    then restart the server.
 
@@ -108,8 +131,9 @@ The first time the server starts, it may ask to be signed in to Hytale. OrbisFox
 the code; afterwards press *Remember sign-in* so it stays signed in across restarts.
 
 Want to look around first? Run **`Demo.bat`**. It starts OrbisFox with a pretend server, made-up
-players and a fake map, in a separate data folder. Type `stress` in its console to watch the
-watchdog deal with a chunk overload, and `calm` to end it.
+players, a fake map and made-up memories, in a separate data folder. Type `stress` in its console to
+watch the watchdog deal with a chunk overload, `calm` to end it, and `mockveto` to play an operator
+typing `/veto`.
 
 ### Linux
 
@@ -124,8 +148,9 @@ Run it under `systemd` or `tmux` to keep it going after you log out.
 The server console doesn't show pings, kills, distance walked, tick rates, or which chunks are
 loaded. The small **OrbisFox Bridge** plugin (`plugin/`) reports those to OrbisFox over
 `127.0.0.1` only, and only when OrbisFox started the server. Each start uses a fresh random token.
-Without the plugin, OrbisFox still works; those numbers just show as unavailable, and the chunk map
-estimates loaded areas from view distance.
+It also adds the operators' **`/veto`** command and builds the **world map** from map images the
+server has already drawn. Without the plugin, OrbisFox still works; those parts just show as
+unavailable.
 
 Install it from the panel (*Mods and logs → Install plugin*), or copy `OrbisFoxBridge.jar` from the
 latest GitHub release into your server's `mods` folder. To build it yourself, see
@@ -174,8 +199,13 @@ orbisfox/          Python backend (standard library only)
   watchdog.py      the chunk-freeze watchdog and suggestions
   jvm.py           GC log reader, finding Java
   metrics.py       CPU, memory and GPU (Windows performance counters / Linux /proc)
+  veto.py          operators' /veto and the cool-down
+  importer.py      reads an existing server's start script, jvm.options and config.json
+  memories.py      memories from Assets.zip and the save files
+  worldmap.py      the map folder, its viewer and the read-only network share
   backups.py  updates.py  players.py  bridge.py  routes.py  httpd.py  desktop.py
 web/               the panel (plain HTML, CSS and ES modules; no build step)
+web/livemap/       the standalone world-map viewer (copied into the map folder)
 plugin/            OrbisFox Bridge, the Java server plugin
 tools/mock_server.py   pretend Hytale server used by the demo and for testing
 ```

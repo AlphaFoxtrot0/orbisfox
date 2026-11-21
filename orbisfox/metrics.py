@@ -237,7 +237,7 @@ class Sampler:
         self._nv_last = (now, res)
         return res
 
-    def sample(self, pid):
+    def sample(self, pid, gpu=False):
         now = time.time()
         out = {"t": now, "cpu": None, "rss": None, "private": None, "sys_cpu": self._sys_cpu(),
                "gpu": None, "sys_gpu": None, "vram": None}
@@ -253,7 +253,9 @@ class Sampler:
                     out["cpu"] = max(0.0, min(100.0, 100.0 * (cpu_s - last[2]) / (now - last[1]) / CPUS))
                 self._last_proc = (pid, now, cpu_s)
         try:
-            if IS_WIN:
+            if not gpu:
+                pass
+            elif IS_WIN:
                 out["gpu"], out["sys_gpu"], out["vram"] = self._gpu_win(pid)
             elif self._nvsmi:
                 out["gpu"], out["sys_gpu"], out["vram"] = self._gpu_nvidia(pid)

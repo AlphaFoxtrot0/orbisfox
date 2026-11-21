@@ -20,7 +20,6 @@ export function mountTop(root, openPanel) {
   vitals = h("div", { class: "vitals" },
     vital("cpu", "CPU", () => openPanel("perf")),
     vital("mem", "Memory", () => openPanel("perf")),
-    vital("gpu", "GPU", () => openPanel("perf"), true),
     vital("tps", "Tick rate", () => openPanel("perf"), true),
     vital("players", "Players", () => openPanel("players")),
     vital("backup", "Last backup", () => openPanel("backups"), true));
@@ -38,7 +37,7 @@ export function mountTop(root, openPanel) {
   on("updates", renderNotices);
   on("watchdog", renderNotices);
   on("connection", (ok) => { renderStatus(); if (!ok) renderNotices(); });
-  setInterval(() => { renderStatus(); renderVitals(); }, 1000);
+  setInterval(() => { renderStatus(); renderVitals(); if (S.server.pending) renderNotices(); }, 1000);
 }
 
 function renderStatus() {
@@ -51,12 +50,21 @@ function renderStatus() {
     const left = Math.max(0, Math.round(sv.pending.at - Date.now() / 1000));
     label = sv.pending.action === "restart" ? "Restarting" : "Stopping";
     sub = `in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
-  } else if (st === "running" && sv.ready_at) sub = duration(Date.now() / 1000 - sv.started_at);
+  } else if (st === "running" && sv.ready_at) sub = uptime(Date.now() / 1000 - sv.started_at);
   else if (st === "crashed" && sv.exit_code != null) sub = `exit ${sv.exit_code}`;
   pill.querySelector(".s").textContent = label;
   pill.querySelector(".sub").textContent = sub;
   const nm = document.getElementById("server-name");
   if (nm) nm.textContent = [sv.name || "Hytale server", sv.version ? `v${sv.version}` : ""].filter(Boolean).join("  ·  ");
+}
+
+// Whole minutes only, so the header doesn't change width every second.
+function uptime(s) {
+  if (s < 60) return "<1 min";
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  if (d) return `${d}d ${h}h`;
+  if (h) return `${h}h ${m}m`;
+  return `${m} min`;
 }
 
 function renderControls() {
@@ -136,9 +144,6 @@ function renderVitals() {
   } else if (alive && m.rss) {
     setVital("mem", bytes(m.rss, 1), null, hist.map((x) => x.rss), null, "");
   } else setVital("mem", "–");
-  if (alive && m.gpu != null) setVital("gpu", `${m.gpu.toFixed(0)}%`, m.vram ? ` ${bytes(m.vram, 0)}` : null, hist.map((x) => x.gpu), 100, "");
-  else if (m.sys_gpu != null) setVital("gpu", "–", ` PC ${m.sys_gpu.toFixed(0)}%`);
-  else setVital("gpu", "–");
   if (alive && m.tps != null) setVital("tps", m.tps.toFixed(0), " / 30", hist.map((x) => x.tps), 30, m.tps < 12 ? "bad" : m.tps < 22 ? "warn" : "");
   else setVital("tps", "–");
   const n = (S.players.online || []).length;
@@ -171,7 +176,28 @@ export function renderNotices() {
       out.push(notice("warn", "folder", "Server folder needed", sv.problems.join(" "),
         [h("button", { class: "btn sm primary", onclick: () => window.orbis.openPanel("settings") }, "Open settings")]));
     }
-    if (sv.last_error) out.push(notice("bad", "alert", "The server could not start", sv.last_error));
+    if (sv.last_error) {
+      out.push(notice("bad", "alert", "The server could not start", sv.last_error,
+        (sv.other_servers || []).length ? [h("button", { class: "btn sm danger", onclick: async () => {
+          if (await confirmBox("Start anyway?", "Only do this if the other process is a different Hytale server (its own folder and port). Two servers on the same world can damage it.", "Start anyway", true)) act("server/start", { force: true });
+        } }, "Start anyway")] : []));
+    }
+    const vt = sv.vetoes || {};
+    if (sv.pending && sv.pending.kind) {
+      const left = Math.max(0, Math.round(sv.pending.at - Date.now() / 1000));
+      const what = { daily: "Scheduled restart", watchdog: "Recovery restart", update: "Update install" }[sv.pending.kind] || "Automatic restart";
+      out.push(notice("warn", "clock", `${what} in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`,
+        sv.pending.vetoable ? (vt.bridge ? "Operators online were told they can type /veto in game to cancel it." : "Operators could cancel it with /veto, but that needs the OrbisFox Bridge plugin.") : "",
+        [h("button", { class: "btn sm", onclick: () => act("server/cancel", {}) }, "Cancel it")]));
+    } else if (vt.active && vt.active.kind === "update") {
+      out.push(notice("warn", "download", "Automatic update install counting down", "Operators online can type /veto in game to cancel it."));
+    }
+    for (const [kind, secs] of Object.entries(vt.cooldowns || {})) {
+      const what = { daily: "scheduled restart", watchdog: "recovery restart", update: "automatic update" }[kind] || kind;
+      const last = (vt.history || []).filter((x) => x.kind === kind).pop();
+      out.push(notice("info", "shield", `${last ? last.player : "An operator"} cancelled the ${what}`,
+        `OrbisFox will try again in about ${Math.max(1, Math.round(secs / 60))} minute${secs > 90 ? "s" : ""}.`));
+    }
     if (sv.auth_prompt && (sv.auth_prompt.url || sv.auth_prompt.code)) {
       const url = sv.auth_prompt.url || "https://accounts.hytale.com/device";
       out.push(notice("warn", "key", "Sign the server in to Hytale",

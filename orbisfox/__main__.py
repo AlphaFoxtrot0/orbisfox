@@ -26,28 +26,8 @@ def _running_instance(port):
 
 
 def _prepare_demo(data_dir):
-    """A throwaway server folder in the official layout, run by tools/mock_server.py."""
-    import zipfile
-    from .settings import APP_DIR
-    game = os.path.join(data_dir, "demo-server")
-    sd = os.path.join(game, "Server")
-    os.makedirs(os.path.join(sd, "mods"), exist_ok=True)
-    jar = os.path.join(sd, "HytaleServer.jar")
-    if not os.path.exists(jar):
-        with zipfile.ZipFile(jar, "w") as z:
-            z.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\nImplementation-Version: 0.7.3\n")
-    if not os.path.exists(os.path.join(game, "Assets.zip")):
-        with zipfile.ZipFile(os.path.join(game, "Assets.zip"), "w") as z:
-            z.writestr("README.txt", "Demo assets")
-    plugin = os.path.join(sd, "mods", "OrbisFoxBridge.jar")
-    if not os.path.exists(plugin):
-        with zipfile.ZipFile(plugin, "w") as z:
-            z.writestr("manifest.json", '{"Name": "OrbisFoxBridge", "Version": "demo"}')
-    s = Settings(os.path.join(data_dir, "settings.json"))
-    if not s["server_dir"]:
-        s.update({"server_dir": sd, "java": os.path.join(APP_DIR, "tools", "mock_server.py"), "auto_start": True,
-                  "ram_max_gb": 4, "ram_min_gb": 1, "panel": {"port": 8770},
-                  "updates": {"check_every_hours": 0}})
+    from . import demo
+    demo.prepare(data_dir)
 
 
 def main(argv=None):

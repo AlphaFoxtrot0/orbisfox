@@ -94,6 +94,14 @@ final class Tracker {
         event(ev);
     }
 
+    void onVeto(UUID uuid, String name) {
+        Map<String, Object> ev = new LinkedHashMap<>();
+        ev.put("type", "veto");
+        ev.put("player", name);
+        ev.put("uuid", uuid == null ? "" : uuid.toString());
+        event(ev);
+    }
+
     void onPlayerDeath(UUID uuid, String name, String cause, String killer, String world, double x, double z) {
         bump(uuid, 1, 1);
         Map<String, Object> ev = new LinkedHashMap<>();

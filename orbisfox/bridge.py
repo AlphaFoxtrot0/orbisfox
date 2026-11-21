@@ -33,6 +33,21 @@ class Bridge:
     def base(self):
         return f"http://127.0.0.1:{int(self.core.settings['plugin_port'])}"
 
+    def _post(self, path, body, timeout=3):
+        req = urllib.request.Request(self.base + path, data=json.dumps(body).encode(),
+                                     headers={"X-OrbisFox-Token": self.token, "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read() or b"{}")
+
+    def notify_ops(self, text):
+        """Private message to every online operator (players allowed to /veto). Returns how many got it."""
+        if not self.connected:
+            return 0
+        try:
+            return int(self._post("/notify", {"to": "ops", "text": text}).get("sent", 0))
+        except (OSError, ValueError, urllib.error.URLError):
+            return 0
+
     def _get(self, path, timeout=3, raw=False):
         req = urllib.request.Request(self.base + path, headers={"X-OrbisFox-Token": self.token})
         with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -72,12 +87,6 @@ class Bridge:
             raise RuntimeError("The OrbisFox Bridge plugin is not connected.")
         from urllib.parse import quote
         return self._get(f"/chunks?world={quote(world or '')}", timeout=8)
-
-    def tile(self, world, x, z):
-        if not self.connected:
-            raise RuntimeError("The OrbisFox Bridge plugin is not connected.")
-        from urllib.parse import quote
-        return self._get(f"/tile?world={quote(world or '')}&x={int(x)}&z={int(z)}", timeout=8, raw=True)
 
     # ---------------------------------------------------------------------------- install
     @staticmethod

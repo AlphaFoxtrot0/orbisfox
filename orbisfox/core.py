@@ -18,6 +18,9 @@ from .players import Players
 from .server import Supervisor
 from .settings import APP_DIR, DATA_DIR, Settings
 from .updates import Updates
+from .veto import Vetoes
+from .memories import Memories
+from .worldmap import WorldMap
 
 
 class Core:
@@ -39,6 +42,10 @@ class Core:
         self.backups = Backups(self)
         self.updates = Updates(self)
         self.watchdog = wdmod.Watchdog(self)
+        self.vetoes = Vetoes(self)
+        self.memories = Memories(self)
+        self.worldmap = WorldMap(self)
+        self._daily_retry = None      # (label) of a daily restart an operator vetoed
         self.peak_players = 0
         self.auth_prompt = None       # {"url", "code"} when the server asks to be signed in
         self.auth_needed = False
@@ -55,9 +62,16 @@ class Core:
         lay = hytale.locate(self.settings["server_dir"])
         return lay["server_dir"] if lay["jar"] else None
 
+    def map_dir(self):
+        return self.worldmap.dir
+
     def start_threads(self):
         threading.Thread(target=self._metrics_loop, name="metrics", daemon=True).start()
         threading.Thread(target=self._schedule_loop, name="schedule", daemon=True).start()
+        threading.Thread(target=self._map_loop, name="map", daemon=True).start()
+        self.worldmap.start_share()
+        if self.server_dir():
+            threading.Thread(target=self.memories.catalog, daemon=True).start()
         if self.settings["auto_start"] and self.server_dir() and not self.orphan:
             threading.Thread(target=lambda: self._safe_start("OrbisFox opened"), daemon=True).start()
         threading.Thread(target=self.updates.check, daemon=True).start()
@@ -121,6 +135,8 @@ class Core:
         if m:
             self.players.left(m.group(1), m.group(2))
             return
+        if "executed command" in msg and self.vetoes.check_line(msg):
+            return
         stall = hytale.stall_signal(msg, logger)
         if stall:
             self.watchdog.on_stall(*stall)
@@ -161,6 +177,7 @@ class Core:
         threading.Thread(target=self.players.scan_files, daemon=True).start()
 
     def on_server_exit(self, code):
+        self._daily_retry = None
         self.players.all_left()
         self.watchdog.on_server_stop()
         self.players.save(force=True)
@@ -170,6 +187,8 @@ class Core:
         for ev in st.get("events") or []:
             if ev.get("type") == "chat":
                 self._push(f"[Chat] {ev.get('player')}: {ev.get('message')}", "chat")
+            elif ev.get("type") == "veto":
+                self.vetoes.on_veto(ev.get("player") or "An operator")
             elif ev.get("type") == "death":
                 killer = f" by {ev['killer']}" if ev.get("killer") else ""
                 self._push(f"{ev.get('player')} died ({ev.get('cause', 'unknown')}){killer}", "death")
@@ -217,11 +236,19 @@ class Core:
         self.publish_server()
 
     # ---------------------------------------------------------------------------- metrics
+    def _map_loop(self):
+        while True:
+            try:
+                self.worldmap.tick()
+            except Exception as e:  # noqa: BLE001
+                self.log_app(f"Map housekeeping error: {e}", level="error")
+            time.sleep(10)
+
     def _metrics_loop(self):
         n = 0
         while True:
             try:
-                s = self.sampler.sample(self.server.pid)
+                s = self.sampler.sample(self.server.pid, gpu=self.settings.get("track_gpu", False))
                 gc = self.gc.summary(window_s=60)
                 s["heap_used"] = gc.get("used_after_gc_mb")
                 s["heap_max"] = gc.get("max_mb")
@@ -262,6 +289,14 @@ class Core:
     def _daily_restarts(self):
         r = self.settings["restarts"]
         if not self.server.running or not r.get("daily"):
+            self._daily_retry = None
+            return
+        tmpl = r.get("message") or "Server restarting in {time}."
+        if self._daily_retry and not self.server.pending and not self.vetoes.blocked("daily"):
+            # An operator cancelled it; the cool-down is over, so try again (with a short warning).
+            label, self._daily_retry = self._daily_retry, None
+            if not self.server.schedule("restart", 60, label, message=tmpl, kind="daily"):
+                self._daily_retry = label
             return
         warn = max([int(x) for x in r.get("warn_minutes") or [0]] + [0]) * 60
         now = dt.datetime.now()
@@ -277,8 +312,14 @@ class Core:
             left = (at - now).total_seconds()
             if left <= warn and key not in self._schedule_done and not self.server.pending:
                 self._schedule_done.add(key)
-                self.server.schedule("restart", max(0, int(left)), f"daily restart at {hhmm}",
-                                     message=r.get("message") or "Server restarting in {time}.")
+                label = f"daily restart at {hhmm}"
+                if not self.server.schedule("restart", max(0, int(left)), label, message=tmpl, kind="daily"):
+                    self._daily_retry = label
+
+    def on_vetoed(self, kind, label):
+        """Called after an operator cancels an automated action."""
+        if kind == "daily":
+            self._daily_retry = label
 
     def _periodic_backup(self):
         every = int(self.settings["backups"].get("every_minutes") or 0)
@@ -305,10 +346,18 @@ class Core:
             if self.updates.available():
                 self.toast("Server update available",
                            f"{self.updates.installed_version()} → {self.updates.latest['version']}", "info", 0)
-        if (u.get("auto_install") and self.updates.available() and not self.updates.busy
-                and not self.players.online and self.server.running):
-            self.log_app("Installing the update automatically (nobody is online).")
-            self.updates.install("auto")
+        mode = u.get("auto_install")
+        mode = "empty" if mode is True else (mode or "off")
+        if mode == "off" or not self.updates.available() or self.updates.busy or not self.server.running:
+            return
+        if self.vetoes.blocked("update"):
+            return
+        if not self.players.online:
+            self.log_app("Installing the server update automatically (nobody is online).")
+            self.updates.install("auto", warn=False)
+        elif mode == "always":
+            self.log_app("Installing the server update automatically; players get 5 minutes' warning.")
+            self.updates.install("auto", warn=True, automated=True)
 
     # ---------------------------------------------------------------------------- access
     def access_cache(self, fresh=False):
@@ -335,7 +384,9 @@ class Core:
                     game_dir=lay["game_dir"], version=self.updates.installed_version(),
                     name=cfg.get("ServerName"), max_players=cfg.get("MaxPlayers"),
                     view_radius=cfg.get("MaxViewRadius"), auth_prompt=self.auth_prompt,
-                    auth_needed=self.auth_needed, orphan=self.orphan, bridge=self.bridge.info())
+                    auth_needed=self.auth_needed, orphan=self.orphan, bridge=self.bridge.info(),
+                    vetoes=self.vetoes.info(), imported=self.settings.get("imported"),
+                    other_servers=self.server.other_servers)
 
     def publish_server(self):
         self.hub.publish("server", self.server_info())
@@ -381,6 +432,40 @@ class Core:
             "access": self.access_cache(),
             "catalog": [{"cmd": c, "args": a, "desc": d} for c, a, d in hytale.CATALOG],
         }
+
+    def take_over_server_updates(self):
+        """The server can install updates by itself (config.json Update.AutoApplyMode), which would
+        skip OrbisFox's warnings and the operators' veto. OrbisFox switches that off before each start
+        and does the same job itself (Updates panel: install automatically)."""
+        if not self.settings["updates"].get("manage_server_updates", True):
+            return
+        sd = self.server_dir()
+        cfg = hytale.read_config(sd) if sd else {}
+        u = cfg.get("Update") if isinstance(cfg.get("Update"), dict) else None
+        mode = (u or {}).get("AutoApplyMode")
+        if u is None or mode in (None, "Disabled"):
+            return
+        if self.settings["updates"].get("auto_install") in (None, False, "off"):
+            self.settings.update({"updates": {"auto_install": "always" if mode == "Scheduled" else "empty"}})
+        u["AutoApplyMode"] = "Disabled"
+        try:
+            hytale.write_json(os.path.join(sd, "config.json"), cfg)
+            self.log_app(f"The server was set to install updates by itself ({mode}). OrbisFox does this now, "
+                         "with warnings and the operators' veto; see Updates.")
+        except OSError as e:
+            self.log_app(f"Could not change the server's own update setting: {e}", level="warn")
+
+    def import_server(self, server_dir):
+        from . import importer
+        notes = importer.apply(self, server_dir)
+        if notes:
+            self.log_app("Imported your server's existing setup: " + "; ".join(notes))
+            self.toast("Imported your server's settings", "; ".join(notes[:6]), "info", 15000)
+        self.players.scan_files()
+        self._access = None
+        self.hub.publish("settings", self.settings.public())
+        self.publish_server()
+        return notes
 
     def open_path(self, path):
         if not path or not os.path.exists(path):

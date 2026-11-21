@@ -3,7 +3,7 @@ package com.alphafoxtrot.orbisfox.bridge;
 import java.util.Collection;
 import java.util.Map;
 
-/** Just enough JSON writing for the bridge's replies (no library needed). */
+/** Just enough JSON for the bridge's replies and requests (no library needed). */
 final class Json {
 
     private Json() {
@@ -52,9 +52,49 @@ final class Json {
                 sb.append(a[i]);
             }
             sb.append(']');
+        } else if (o instanceof long[] a) {
+            sb.append('[');
+            for (int i = 0; i < a.length; i++) {
+                if (i > 0) sb.append(',');
+                sb.append(a[i]);
+            }
+            sb.append(']');
         } else {
             str(sb, o.toString());
         }
+    }
+
+    /** The string value of a top-level key in a small JSON object (enough for the bridge's requests). */
+    static String readString(String json, String key) {
+        int k = json.indexOf("\"" + key + "\"");
+        if (k < 0) return null;
+        int i = json.indexOf(':', k);
+        if (i < 0) return null;
+        i = json.indexOf('"', i);
+        if (i < 0) return null;
+        StringBuilder sb = new StringBuilder();
+        for (i = i + 1; i < json.length(); i++) {
+            char c = json.charAt(i);
+            if (c == '"') return sb.toString();
+            if (c == '\\' && i + 1 < json.length()) {
+                char n = json.charAt(++i);
+                switch (n) {
+                    case 'n' -> sb.append('\n');
+                    case 't' -> sb.append('\t');
+                    case 'r' -> sb.append('\r');
+                    case 'u' -> {
+                        if (i + 4 < json.length()) {
+                            sb.append((char) Integer.parseInt(json.substring(i + 1, i + 5), 16));
+                            i += 4;
+                        }
+                    }
+                    default -> sb.append(n);
+                }
+            } else {
+                sb.append(c);
+            }
+        }
+        return null;
     }
 
     private static void str(StringBuilder sb, String s) {

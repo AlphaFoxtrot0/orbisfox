@@ -2,7 +2,7 @@
 import { S, on, isRunning, isAlive } from "./store.js";
 import {
   h, icon, api, act, toast, modal, confirmBox, promptBox, menu, clear, bytes, ago, duration, dateTime,
-  distance, num, initials,
+  distance, num, initials, debounce,
 } from "./util.js";
 
 const rule = (label, ...actions) => h("div", { class: "rule" }, h("span", { class: "gem" }), h("span", { class: "label" }, label),
@@ -356,11 +356,17 @@ function renderUpdates(body) {
     await act("settings", { changes: { updates: { patchline: e.target.value } } });
     act("updates/check", {});
   } }, [["release", "Release"], ["pre-release", "Pre-release (testing)"]].map(([v, l]) => h("option", { value: v, selected: u.patchline === v }, l)));
-  const auto = h("input", { type: "checkbox", checked: !!(S.settings.updates || {}).auto_install, onchange: (e) => act("settings", { changes: { updates: { auto_install: e.target.checked } } }) });
+  const am = (S.settings.updates || {}).auto_install;
+  const autoMode = am === true ? "empty" : am || "off";
+  const auto = h("select", { class: "input sm", style: { width: "auto" }, onchange: (e) => act("settings", { changes: { updates: { auto_install: e.target.value } } }) },
+    [["off", "Don't install automatically"], ["empty", "Install when nobody is online"], ["always", "Install even with players on (5-minute warning, operators can /veto)"]]
+      .map(([v, l]) => h("option", { value: v, selected: autoMode === v }, l)));
   clear(body, big, auth, prog,
     rule("Options"),
     h("label", { class: "field" }, h("span", { class: "label" }, "Update channel"), patch, h("span", { class: "help" }, "Pre-release gets fixes sooner (Update 8's memory fixes are there now) but may have new bugs.")),
-    h("label", { class: "switch", style: { marginBottom: "16px" } }, auto, h("span", { class: "track" }), h("span", null, "Install updates automatically when nobody is online")),
+    h("label", { class: "field" }, h("span", { class: "label" }, "Automatic installs"), auto,
+      h("span", { class: "help" }, "With players on, operators get a private message and can type /veto to cancel. After a veto OrbisFox waits " +
+        `${(S.settings.veto || {}).cooldown_minutes ?? 5} minutes before trying again.`)),
     rule("How OrbisFox installs"),
     h("p", { class: "muted", style: { fontSize: "15px", marginTop: 0 } },
       "With the server running, OrbisFox uses the server's own updater: it downloads, backs up, warns players, applies and restarts. ",
@@ -370,11 +376,20 @@ function renderUpdates(body) {
       u.builtin_ok ? h("span", { class: "tag cyan" }, "Built-in updater available") : h("span", { class: "tag" }, "Built-in updater needs the official folder layout")));
 }
 
-async function installFlow(u) {
+function installFlow(u) {
   const n = (S.players.online || []).length;
-  const ok = await confirmBox(`Install ${u.latest.version}?`,
-    `OrbisFox backs up the world, ${n ? `warns the ${n} player${n > 1 ? "s" : ""} online, ` : ""}restarts the server on the new version and keeps your world, settings and mods.`, "Install");
-  if (ok) act("updates/install", { method: "auto" });
+  const go = (warn) => act("updates/install", { method: "auto", warn }, warn && n ? "Installing: players get a 1-minute warning" : "Installing the update now");
+  modal({
+    title: `Install ${u.latest.version}?`,
+    body: h("div", null,
+      h("p", { style: { margin: "0 0 12px", fontSize: "18px", lineHeight: "26px" } },
+        "OrbisFox backs up the world, restarts the server on the new version, and keeps your world, settings and mods."),
+      n ? h("p", { class: "muted", style: { margin: 0 } }, `${n} player${n > 1 ? "s are" : " is"} online. Warn them first (1 minute) or install straight away.`)
+        : h("p", { class: "muted", style: { margin: 0 } }, "Nobody is online, so there is nothing to warn about.")),
+    actions: n ? [{ label: "Cancel" }, { label: "Install now", icon: "download", onclick: () => go(false) },
+      { label: "Warn players first", cls: "primary", icon: "clock", onclick: () => go(true) }]
+      : [{ label: "Cancel" }, { label: "Install", cls: "primary", icon: "download", onclick: () => go(false) }],
+  });
 }
 
 // ============================================================================ stats
@@ -430,6 +445,67 @@ function statsTable(t) {
   };
   draw();
   modal({ title: "Player stats", wide: true, body: wrap });
+}
+
+// ============================================================================ memories
+let memFilter = "missing", memSearch = "";
+const TIME_LABEL = { day: "Daytime", night: "Night only" };
+
+async function renderMemories(body) {
+  let d;
+  try { d = await api("memories"); } catch (e) { clear(body, h("div", { class: "empty" }, e.message)); return; }
+  if (!d.ready) {
+    clear(body, h("div", { class: "card", style: { marginTop: "8px" } },
+      h("div", { class: "stat-big" }, d.building ? "Reading the game files..." : "Not available yet"),
+      h("p", { class: "muted" }, d.building ? "OrbisFox is reading the list of memories from Assets.zip (a few seconds, once)." : d.error || "")));
+    if (d.building) setTimeout(() => { if (body.isConnected) renderMemories(body); }, 2500);
+    return;
+  }
+  const t = d.totals;
+  const pct = t.total ? (t.restored / t.total) * 100 : 0;
+  const search = h("input", { class: "input sm", type: "search", placeholder: "Find a creature, zone or biome", value: memSearch,
+    oninput: debounce((e) => { memSearch = e.target.value.trim().toLowerCase(); renderList(); }, 150) });
+  const seg = h("div", { class: "seg", style: { flexWrap: "wrap" } }, [["missing", "Not found", t.missing], ["carried", "Carried", t.carried], ["restored", "Restored", t.restored], ["all", "All", t.total]].map(([id, label, n]) =>
+    h("button", { "aria-pressed": String(memFilter === id), onclick: () => { memFilter = id; seg.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.f === id))); renderList(); }, "data-f": id }, label, h("span", { class: "count" }, n))));
+  const list = h("div");
+  const where = (e) => {
+    if (e.where && e.where.length) return e.where.map((w) => `${w.zone}${w.biomes.length ? ": " + w.biomes.join(", ") : ""}`).join("  ·  ");
+    if (e.placed) return "Dungeons, camps and other structures";
+    return "No natural spawns (bosses, babies or special events)";
+  };
+  function renderList() {
+    const rows = d.entries.filter((e) => (memFilter === "all" || e.status === memFilter) &&
+      (!memSearch || `${e.name} ${e.category_name} ${where(e)}`.toLowerCase().includes(memSearch)));
+    const groups = new Map();
+    for (const e of rows) { if (!groups.has(e.category_name)) groups.set(e.category_name, []); groups.get(e.category_name).push(e); }
+    clear(list, rows.length ? [...groups.entries()].map(([cat, items]) => [
+      rule(`${cat}  ·  ${items.length}`),
+      h("div", { class: "list" }, items.map((e) => h("div", { class: "item", style: { alignItems: "flex-start" } },
+        h("div", { class: `hexav ${e.status === "restored" ? "op" : e.status === "carried" ? "" : "off"}`, style: { width: "32px", height: "36px", fontSize: "13px", marginTop: "2px" } },
+          e.status === "restored" ? icon("check", "sm") : initials(e.name)),
+        h("div", { class: "main" },
+          h("div", { class: "row wrap", style: { gap: "6px" } }, h("span", { class: "name" }, e.name),
+            e.unlock === "Kill" ? h("span", { class: "tag ember" }, "Defeat it") : null,
+            TIME_LABEL[e.time] ? h("span", { class: "tag amber" }, TIME_LABEL[e.time]) : null,
+            e.status === "restored" ? h("span", { class: "tag fox" }, "Restored") : null),
+          h("div", { class: "sub", style: { whiteSpace: "normal" } }, where(e)),
+          e.carried_by && e.carried_by.length ? h("div", { class: "sub", style: { whiteSpace: "normal", color: "var(--cyan)" } },
+            "Carried by " + e.carried_by.map((c) => c.name + (c.where ? ` (found in ${c.where})` : "")).join(", ")) : null))))])
+      : h("div", { class: "empty" }, memFilter === "missing" && !memSearch ? "Every memory has been found." : "Nothing matches."));
+  }
+  const carriers = Object.entries(d.carriers || {}).sort((a, b) => b[1] - a[1]);
+  clear(body,
+    h("div", { class: "card", style: { marginTop: "8px" } },
+      h("div", { class: "label" }, "Restored on this server"),
+      h("div", { class: "stat-big" }, `${t.restored} `, h("span", { class: "muted", style: { fontSize: "18px", fontWeight: 400 } }, `of ${t.total}`)),
+      h("div", { class: "meter", style: { margin: "8px 0" } }, h("i", { style: { width: `${pct}%`, background: "var(--fox)" } })),
+      h("div", { class: "muted", style: { fontSize: "15px" } }, `${t.carried} more are being carried and still need restoring at the Heart of Orbis. ${t.missing} haven't been found yet.`)),
+    carriers.length ? h("p", { class: "muted", style: { fontSize: "15px" } }, "Carrying: " + carriers.map(([n, c]) => `${n} (${c})`).join(", ")) : null,
+    h("div", { class: "col", style: { margin: "12px 0 4px" } }, seg, search),
+    list,
+    h("p", { class: "muted", style: { fontSize: "14px", marginTop: "16px" } }, d.saved_note,
+      " Restored memories are shared by the whole server; the game doesn't record who restored each one."));
+  renderList();
 }
 
 // ============================================================================ performance
@@ -490,9 +566,9 @@ async function renderPerf(body, fresh = true) {
       h("div", { class: "stat" }, h("div", { class: "label" }, "Loaded chunks"), h("div", { class: "v" }, worlds.length ? num(chunks) : "–")),
       h("div", { class: "stat" }, h("div", { class: "label" }, "View distance"), h("div", { class: "v" }, wd.view_radius != null ? String(wd.view_radius) : S.server.view_radius != null ? String(S.server.view_radius) : "–",
         wd.baseline_radius && wd.view_radius < wd.baseline_radius ? h("small", null, ` of ${wd.baseline_radius}`) : h("small", null, " chunks")))),
-    rule("CPU and GPU"),
+    rule((S.settings || {}).track_gpu ? "CPU and GPU" : "CPU"),
     lineChart([{ label: "Server CPU", color: "#4DC4D8", values: hist.map((x) => x.cpu), fill: true }, { label: "Whole PC", color: "#5E8A91", values: hist.map((x) => x.sys_cpu), dash: true },
-      { label: "Server GPU", color: "#E8B029", values: hist.map((x) => x.gpu) }], { max: 100, unit: "%" }),
+      ...(hist.some((x) => x.gpu != null) ? [{ label: "Server GPU", color: "#E8B029", values: hist.map((x) => x.gpu) }] : [])], { max: 100, unit: "%" }),
     rule("Memory"),
     lineChart([{ label: "Java heap after GC", color: "#D66623", values: hist.map((x) => x.heap_used), fill: true, fmt: (v) => `${(v / 1024).toFixed(1)} GB` },
       { label: "Heap limit", color: "#5E8A91", values: hist.map((x) => x.heap_max), dash: true, fmt: (v) => `${(v / 1024).toFixed(0)} GB` }], { max: (gc.max_mb || 0) * 1.05 || undefined }),
@@ -571,8 +647,17 @@ async function renderSettings(body) {
   const restarts = bind("restarts.daily", h("input", { class: "input", value: (s.restarts.daily || []).join(", "), placeholder: "05:00, 17:00" }), "list");
   const lanOn = !!s.panel.lan;
   const pw = h("input", { class: "input", type: "password", placeholder: s.panel.has_password ? "Password is set (type to change)" : "At least 8 characters", autocomplete: "new-password" });
+  const imp = s.imported && s.imported.notes ? s.imported : null;
   clear(body,
-    rule("Server"),
+    rule("Server", h("button", { class: "btn ghost xs", title: "Read start.bat, jvm.options and config.json again", onclick: async () => {
+      if (await confirmBox("Re-import from the server?", "OrbisFox reads the server's start script, jvm.options and config.json again and replaces its own launch settings (memory, Java flags, server options, backups, update channel) with what it finds.", "Re-import")) {
+        const r = await act("settings/import", {});
+        if (r) renderSettings(body);
+      }
+    } }, icon("refresh", "sm"), "Re-import")),
+    imp ? h("div", { class: "note", style: { marginBottom: "16px" } }, icon("check"), h("div", null,
+      h("b", null, "Imported from your server "), h("span", { class: "muted" }, ago(imp.at)),
+      h("ul", { style: { margin: "4px 0 0", paddingLeft: "18px", fontSize: "15px", lineHeight: "21px" } }, imp.notes.map((n) => h("li", null, n))))) : null,
     field("Server folder", h("div", { class: "row" }, dirInput, window.orbis.local ? h("button", { class: "btn", onclick: async () => { const r = await act("pick-folder", { start: dirInput.value }); if (r && r.path) dirInput.value = r.path; } }, "Browse") : null),
       lay.problems && lay.problems.length ? h("span", { style: { color: "var(--amber-text)" } }, lay.problems.join(" ")) : `Found HytaleServer.jar${lay.assets ? " and Assets.zip" : ""}${lay.game_dir ? " (official layout)" : ""}.`),
     field("Java", txt("java", s.java, { placeholder: java.path ? `Automatic: ${java.path}` : "Automatic" }),
@@ -583,6 +668,7 @@ async function renderSettings(body) {
     chk("exit_on_oom", s.exit_on_oom, "Exit when out of memory", "A server out of memory restarts cleanly instead of hanging."),
     chk("gc_log", s.gc_log, "Write a GC log", "Lets OrbisFox measure memory pressure. Tiny and rotated."),
     chk("aot_cache", s.aot_cache, "Use the AOT cache", "Faster boot using HytaleServer.aot."),
+    chk("track_gpu", s.track_gpu, "Track GPU usage", "Off by default: the server doesn't render, and reading GPU counters costs a little CPU."),
     field("Extra Java arguments", txt("jvm_args", s.jvm_args, { placeholder: "-XX:+UseZGC" })),
     field("Extra server arguments", txt("server_args", s.server_args, { placeholder: "--disable-sentry" })),
     rule("Starting and stopping"),
@@ -601,12 +687,33 @@ async function renderSettings(body) {
     rule("Watchdog"),
     chk("watchdog.enabled", s.watchdog.enabled, "Recover an overloaded server", "Restarts with a warning when memory, GC or world ticks stay critical."),
     chk("watchdog.adaptive_view", s.watchdog.adaptive_view, "Adaptive view distance", "Lowers view distance in steps of 2 (down to 6) while memory is tight, raises it back when calm."),
-    chk("watchdog.warn_players", s.watchdog.warn_players, "Warn players 30 seconds before a recovery restart"),
+    chk("watchdog.warn_players", s.watchdog.warn_players, "Warn players before a recovery restart", "Operators can type /veto during the countdown."),
+    field("Recovery restart warning (seconds)", numIn("watchdog.warn_seconds", s.watchdog.warn_seconds ?? 60, { min: 10, max: 600 })),
     h("div", { class: "field-row" }, field("Critical heap %", numIn("watchdog.heap_percent", s.watchdog.heap_percent, { min: 70, max: 99 })), field("Critical GC time %", numIn("watchdog.gc_overhead_percent", s.watchdog.gc_overhead_percent, { min: 10, max: 90 }))),
     h("div", { class: "field-row" }, field("Sustained for (s)", numIn("watchdog.window_s", s.watchdog.window_s, { min: 30, max: 1800 })), field("World stuck after (s)", numIn("watchdog.unresponsive_s", s.watchdog.unresponsive_s, { min: 10, max: 600 }))),
+    rule("Operator veto"),
+    chk("veto.enabled", (s.veto || {}).enabled !== false, "Let operators cancel automatic restarts and updates",
+      "Scheduled restarts, recovery restarts and automatic updates. Operators online get a private message; nothing is announced when nobody is online. Needs the OrbisFox Bridge plugin."),
+    h("div", { class: "field-row" },
+      field("Cool-down after a veto (minutes)", numIn("veto.cooldown_minutes", (s.veto || {}).cooldown_minutes ?? 5, { min: 0, max: 240 }), "Then the action may try again."),
+      field("Command", txt("veto.command", (s.veto || {}).command || "veto", { maxlength: 24 }), "Typed in game as /" + ((s.veto || {}).command || "veto") + ". Applies at the next start.")),
     rule("Updates"),
     field("Check every (hours)", numIn("updates.check_every_hours", s.updates.check_every_hours, { min: 0 }), "0 = only when you press Check."),
     field("hytale-downloader path", txt("updates.downloader", s.updates.downloader, { placeholder: "Automatic" })),
+    h("div", { id: "set-map" }, rule("World map")),
+    h("p", { class: "muted", style: { fontSize: "15px", lineHeight: "21px", marginTop: 0 } },
+      "The OrbisFox Bridge plugin copies the in-game map the server already draws, so the map costs the server nothing. Viewers' browsers do the drawing."),
+    chk("map.public", (s.map || {}).public, "Share the map on my network (read-only)",
+      "For OBS on another PC, a phone or a second screen. Uses its own port and shows only the map, never the panel. Add &overlay=1 to the link for a stream overlay."),
+    h("div", { class: "field-row" },
+      field("Map port", numIn("map.port", (s.map || {}).port ?? 8767, { min: 1024, max: 65535 })),
+      field("Map key (optional)", txt("map.key", (s.map || {}).key || "", { placeholder: "No key" }), "Viewers need ?key=... in the link.")),
+    chk("map.show_players", (s.map || {}).show_players !== false, "Show players on the map"),
+    chk("map.backfill", (s.map || {}).backfill, "Fill in areas explored before OrbisFox (slowly, only while nobody is online)",
+      "The server loads those chunks to draw them, so this is off by default. Applies at the next start."),
+    h("div", { class: "row wrap", style: { marginBottom: "16px" } },
+      window.orbis.local ? h("button", { class: "btn sm", onclick: () => act("open", { which: "map" }) }, icon("folder", "sm"), "Open map folder") : null,
+      h("span", { class: "muted", style: { fontSize: "15px" } }, "The map folder is a complete website: you can also upload it to any static web host.")),
     rule("Panel access"),
     chk("panel.lan", lanOn, "Allow other devices on my network", "Open OrbisFox from a phone or another PC. Needs a password. Takes effect after OrbisFox restarts."),
     field("Panel password", h("div", { class: "row" }, pw, h("button", { class: "btn", onclick: async () => { if (await act("settings/password", { password: pw.value }, "Password saved")) { pw.value = ""; } } }, "Set"))),
@@ -642,8 +749,9 @@ export const PANELS = [
   { id: "backups", title: "Backups", icon: "archive", render: renderBackups, events: ["backups"] },
   { id: "updates", title: "Updates", icon: "download", render: renderUpdates, events: ["updates"] },
   { id: "stats", title: "Stats", icon: "trophy", render: renderStats, events: [], poll: 15000 },
+  { id: "memories", title: "Memories", icon: "book", render: renderMemories, events: ["memories"] },
   { id: "perf", title: "Performance", icon: "pulse", render: renderPerf, events: ["watchdog"], tick: 4000 },
-  { id: "map", title: "Chunk map", icon: "map", overlay: true },
+  { id: "map", title: "World map", icon: "map", overlay: true },
   { id: "mods", title: "Mods and logs", icon: "layers", render: renderMods, events: [] },
   "sep",
   { id: "settings", title: "Settings", icon: "gear", render: renderSettings, events: [] },
@@ -686,7 +794,7 @@ export function mountDock(dockEl, railEl, openMap) {
       bodyEl.scrollTop = y;
     }
   };
-  for (const k of ["players", "access", "backups", "updates", "watchdog", "server"]) on(k, rerender(k));
+  for (const k of ["players", "access", "backups", "updates", "watchdog", "server", "memories"]) on(k, rerender(k));
   const badges = () => {
     const n = (S.players.online || []).length;
     setBadge(buttons.players, n ? String(n) : "");

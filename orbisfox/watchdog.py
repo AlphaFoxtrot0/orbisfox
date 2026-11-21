@@ -235,14 +235,20 @@ class Watchdog:
             self.core.toast("Server is struggling", why, "bad", 0)
             self._critical_since = now   # remind again after another window
             return
+        left = self.core.vetoes.blocked("watchdog")
+        if left:
+            if now - getattr(self, "_veto_noted", 0) > 60:
+                self._veto_noted = now
+                self.note("info", f"An operator cancelled the last recovery restart; trying again in {left / 60:.0f} min")
+            return
+        warn = int(wd.get("warn_seconds", 60)) if wd.get("warn_players", True) else 0
+        if not sv.schedule("restart", warn, "watchdog: server overloaded", kind="watchdog",
+                           message="The server is overloaded and will restart in {time} to recover."):
+            return
         self._restarts.append(now)
         self._critical_since = None
         self.note("critical", f"Restarting to recover: {why}")
         self.core.toast("Restarting to recover", why, "warn", 15000)
-        warn = 30 if wd.get("warn_players", True) else 0
-        stuck = any("responded" in r or "stopped accepting" in r for r in reasons)
-        sv.schedule("restart", 0 if stuck else warn, "watchdog: server overloaded",
-                    message="The server is overloaded and will restart in {time} to recover.")
 
     def info(self):
         gc = self.core.gc.summary(window_s=int(self.core.settings["watchdog"].get("window_s", 120)))

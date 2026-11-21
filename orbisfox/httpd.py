@@ -138,7 +138,7 @@ class _Handler(BaseHTTPRequestHandler):
         if ctype.startswith("text/html"):
             self.send_header("Content-Security-Policy",
                              "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
-                             "connect-src 'self'; frame-ancestors 'none'")
+                             "connect-src 'self'; frame-ancestors 'self'")
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()
@@ -180,6 +180,12 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             if not self._host_ok():
                 raise ApiError(403, "Forbidden host.")
+            if path.startswith("/map/") or path == "/map":
+                # The explored-map website (viewer + tiles) from OrbisFox's map folder.
+                got = self.panel.core.worldmap.serve_file(path[4:])
+                if not got:
+                    raise ApiError(404, "Not found.")
+                return self._send(200, got[0], got[1], {"Cache-Control": "no-cache"})
             if not path.startswith("/api/"):
                 if method != "GET":
                     raise ApiError(405, "Method not allowed.")

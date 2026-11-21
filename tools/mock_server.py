@@ -46,6 +46,14 @@ def _jar_version():
 VERSION = _jar_version()
 START = time.time()
 CHUNK = 32
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from orbisfox.demo import CREATURES as _DEMO   # the made-up creatures in the demo Assets.zip
+    DEMO_IDS = [c[0] for c in _DEMO]
+except ImportError:
+    DEMO_IDS = []
+RESTORED = set(DEMO_IDS[:7:2])
+BRIDGE = {"world": None}       # set when the bridge API starts (for events from console commands)
 
 
 def log(level, logger, msg):
@@ -273,6 +281,68 @@ def png(w, h, rgb_rows):
             + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))
 
 
+def png_rgba(w, h, rgba_rows):
+    raw = b"".join(b"\x00" + bytes(row) for row in rgba_rows)
+
+    def chunk(tag, data):
+        c = struct.pack(">I", len(data)) + tag + data
+        return c + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))
+
+
+class MapTiles:
+    """Plays the plugin's map capture: region tiles of explored chunks in ORBISFOX_MAP_DIR."""
+    REGION, PX = 16, 4          # demo tiles are small (4 px per chunk) to keep the mock light
+
+    def __init__(self, world, out_dir):
+        self.world, self.dir = world, out_dir
+        self.done = set()
+        self.last = 0
+
+    def tick(self):
+        if not self.dir or time.time() - self.last < 20:
+            return
+        self.last = time.time()
+        with self.world.lock:
+            explored = set(self.world.generated) | set(self.world.trail)
+        new = explored - self.done
+        regions = sorted({(cx // self.REGION, cz // self.REGION) for cx, cz in new},
+                         key=lambda r: abs(r[0]) + abs(r[1]))[:8]
+        if not regions:
+            return
+        self.done |= {c for c in new if (c[0] // self.REGION, c[1] // self.REGION) in regions}
+        base = os.path.join(self.dir, "default")
+        size = self.REGION * self.PX
+        for rx, rz in regions:
+            rows = []
+            for py in range(size):
+                cz = rz * self.REGION + py // self.PX
+                row = bytearray()
+                for px in range(size):
+                    cx = rx * self.REGION + px // self.PX
+                    if (cx, cz) in self.done:
+                        r, g, b = color(cx * CHUNK + (px % self.PX) * 8 + 4, cz * CHUNK + (py % self.PX) * 8 + 4)
+                        row += bytes((r, g, b, 255))
+                    else:
+                        row += b"\x00\x00\x00\x00"
+                rows.append(row)
+            data = png_rgba(size, size, rows)
+            for level in ("1", "4", "16"):
+                os.makedirs(os.path.join(base, level), exist_ok=True)
+                with open(os.path.join(base, level, f"{rx}_{rz}.png"), "wb") as f:
+                    f.write(data)
+        files = os.listdir(os.path.join(base, "1"))
+        regs = []
+        for n in files:
+            if n.endswith(".png"):
+                x, z = n[:-4].split("_")
+                regs.append([int(x), int(z), int(os.path.getmtime(os.path.join(base, "1", n)))])
+        write_json(os.path.join(base, "index.json"), {"world": "default", "region_chunks": self.REGION,
+                                                      "chunk_blocks": CHUNK, "levels": [1, 4, 16],
+                                                      "updated": int(time.time()), "regions": regs})
+
+
 def _hash(x, z, s=0):
     n = (x * 374761393 + z * 668265263 + s * 982451653) & 0xFFFFFFFF
     n = (n ^ (n >> 13)) * 1274126177 & 0xFFFFFFFF
@@ -391,6 +461,19 @@ def make_bridge(world, port, token):
             self.send_response(404)
             self.end_headers()
 
+        def do_POST(self):
+            if self.headers.get("X-OrbisFox-Token") != token:
+                self.send_response(401)
+                self.end_headers()
+                return
+            body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            if urlparse(self.path).path == "/notify":
+                text = json.loads(body or b"{}").get("text", "")
+                log("INFO", "OrbisFoxBridge", f"To operators: {text}")
+                return self._json({"sent": 1})
+            self.send_response(404)
+            self.end_headers()
+
         def _json(self, obj):
             data = json.dumps(obj).encode()
             self.send_response(200)
@@ -406,6 +489,10 @@ def make_bridge(world, port, token):
 
 
 # ------------------------------------------------------------------------------------- main
+def bridge_on_early(root):
+    return os.path.exists(os.path.join(root, "mods", "OrbisFoxBridge.jar"))
+
+
 def main():
     root = os.getcwd()
     world = World(root)
@@ -415,6 +502,13 @@ def main():
         if m:
             gc_path = m.group(1).strip('"')
     gclog = GcLog(gc_path, world)
+    tiles = MapTiles(world, os.environ.get("ORBISFOX_MAP_DIR")) if bridge_on_early(root) else None
+    res = os.path.join(root, "universe", "resources")
+    os.makedirs(res, exist_ok=True)
+    if not os.path.exists(os.path.join(res, "Memories.json")):
+        write_json(os.path.join(res, "Memories.json"), {"Memories": [
+            {"Id": "NPC", "NPCRole": c, "TranslationKey": f"server.npcRoles.{c}.name",
+             "CapturedTimestamp": int(time.time() * 1000) - 86400000} for c in sorted(RESTORED)]})
     bridge_on = os.path.exists(os.path.join(root, "mods", "OrbisFoxBridge.jar"))
     log("INFO", "HytaleServer", "Starting HytaleServer")
     log("INFO", "HytaleServer", f"Version {VERSION} (mock), Java 25, max heap {world.heap_max} MB")
@@ -448,14 +542,23 @@ def main():
                 p = Player(name)
                 with world.lock:
                     world.players[p.uuid] = p
+                carried = random.sample([c for c in DEMO_IDS if c not in RESTORED], k=random.randint(0, 3))
                 write_json(os.path.join(root, "universe", "players", p.uuid + ".json"),
                            {"Components": {"Nameplate": {"Text": name},
                                            "Transform": {"Position": {"X": p.x, "Y": p.y, "Z": p.z}},
-                                           "Player": {"GameMode": "Adventure", "PlayerData": {"World": "default"}}}})
+                                           "Player": {"GameMode": "Adventure", "PlayerData": {"World": "default"}},
+                                           "PlayerMemories": {"Capacity": 48, "Memories": [
+                                               {"Id": "NPC", "NPCRole": c, "TranslationKey": f"server.npcRoles.{c}.name",
+                                                "CapturedTimestamp": int(time.time() * 1000) - random.randint(0, 9) * 3600000,
+                                                "FoundLocationNameKey": random.choice(["server.map.region.Zone1_Tier1",
+                                                                                       "server.map.region.Zone1_Tier2"])}
+                                               for c in carried]}}})
                 log("INFO", "Universe|P", f"Adding player '{name} ({p.uuid})")
                 next_join = now + random.uniform(6, 20)
             loaded, new, fill = world.step(dt)
             gclog.tick(dt, fill)
+            if tiles:
+                tiles.tick()
             if world.stress and fill > 0.8 and now - last_warn > (2 if fill > 0.92 else 6):
                 last_warn = now
                 ms = int(200 + (fill - 0.8) * 20000 * random.random())
@@ -640,6 +743,11 @@ def main():
                     break
                 else:
                     log("INFO", "Updater", "Update 0.7.7 available")
+            elif cmd == "mockveto":
+                # Pretend an operator typed /veto in game (what the OrbisFox Bridge plugin reports).
+                who = args[0] if args else "Feran_Fox"
+                log("INFO", "CommandManager", f"{who} executed command: veto")
+                world.emit({"type": "veto", "player": who})
             elif cmd == "stress":
                 world.stress = True
                 log("WARN", "OrbisFoxDemo", "Players scatter in every direction, loading terrain everywhere...")

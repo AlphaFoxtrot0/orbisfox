@@ -166,7 +166,7 @@ a { color: var(--cyan); }
 .brand .sub { display: block; font-size: 14px; line-height: 16px; color: var(--ink-muted); font-weight: 600; }
 
 .status-pill {
-  display: inline-flex; align-items: center; gap: var(--s2);
+  display: inline-flex; align-items: center; gap: var(--s2); flex: none; width: 196px;
   height: 36px; padding: 0 var(--s4) 0 var(--s3); border-radius: var(--r-pill);
   border: 1px solid var(--border-strong); background: var(--bg-raised);
   font-weight: 600; white-space: nowrap;
@@ -179,20 +179,20 @@ a { color: var(--cyan); }
 .status-pill[data-state="updating"] .dot { background: var(--amber); animation: pulse 1s ease-in-out infinite; }
 .status-pill[data-state="crashed"] .dot { background: var(--ember); }
 .status-pill[data-state="crashed"] { border-color: var(--ember); }
-.status-pill .sub { color: var(--ink-muted); font-weight: 400; }
+.status-pill .sub { color: var(--ink-muted); font-weight: 400; font-variant-numeric: tabular-nums; }
 @keyframes pulse { 50% { opacity: 0.35; } }
 
 .vitals { display: flex; align-items: stretch; gap: var(--s2); min-width: 0; overflow: hidden; flex: 1 1 auto; }
 .vital {
   display: flex; flex-direction: column; justify-content: center; gap: 2px;
-  min-width: 108px; padding: var(--s1) var(--s3);
+  flex: none; width: 116px; overflow: hidden; padding: var(--s1) var(--s3);
   border-left: 1px solid var(--line);
   cursor: pointer; border-radius: 0; background: none; border-top: 0; border-right: 0; border-bottom: 0;
   text-align: left;
 }
 .vital:hover { background: var(--bg-hover); }
 .vital .label { font-size: 12px; line-height: 14px; }
-.vital .v { font-size: 20px; line-height: 22px; font-weight: 700; display: flex; align-items: baseline; gap: var(--s1); }
+.vital .v { font-size: 20px; line-height: 22px; font-weight: 700; display: flex; align-items: baseline; gap: var(--s1); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .vital .v small { font-size: 14px; color: var(--ink-muted); font-weight: 400; }
 .vital svg.spark { width: 84px; height: 18px; display: block; }
 .vital.warn .v { color: var(--amber-text); }

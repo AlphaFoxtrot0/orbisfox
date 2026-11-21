@@ -1,5 +1,7 @@
 package com.alphafoxtrot.orbisfox.bridge;
 
+import com.hypixel.hytale.server.core.Message;
+import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.sun.net.httpserver.HttpExchange;
@@ -57,12 +59,8 @@ final class BridgeServer {
             switch (ex.getRequestURI().getPath()) {
                 case "/status" -> json(ex, status(parseLong(q.get("since"))));
                 case "/chunks" -> json(ex, chunkList(q.get("world")));
-                case "/tile" -> {
-                    World w = world(q.get("world"));
-                    byte[] png = w == null ? null : chunks.tile(w, (int) parseLong(q.get("x")), (int) parseLong(q.get("z")));
-                    if (png == null) send(ex, 404, "text/plain", new byte[0]);
-                    else send(ex, 200, "image/png", png);
-                }
+                case "/notify" -> json(ex, Map.of("sent", notifyOps(new String(ex.getRequestBody().readNBytes(64_000),
+                        StandardCharsets.UTF_8))));
                 default -> send(ex, 404, "text/plain", new byte[0]);
             }
         } catch (Throwable t) {
@@ -88,22 +86,32 @@ final class BridgeServer {
         World w = world(worldName);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("chunk_size", 32);
-        if (w == null) {
-            out.put("world", worldName);
-            out.put("chunks", List.of());
-            return out;
-        }
-        out.put("world", w.getName());
-        Chunks.Result r = chunks.loaded(w, tracker.playersIn(w.getName()));
+        out.put("world", w == null ? worldName : w.getName());
+        Chunks.Result r = w == null ? new Chunks.Result(List.of(), false) : chunks.loaded(w);
         out.put("chunks", r.chunks());
         out.put("exact", r.exact());
-        out.put("chunk_size", r.chunkSize());
-        List<Map<String, Object>> ps = new java.util.ArrayList<>();
-        for (Tracker.Player p : tracker.playersIn(w.getName())) {
-            ps.add(Map.of("name", p.name == null ? "?" : p.name, "uuid", p.uuid.toString(), "x", p.x, "z", p.z));
-        }
-        out.put("players", ps);
         return out;
+    }
+
+    /** Body: {"to":"ops","text":"..."}; sends the text to every online player allowed to /veto. */
+    private static int notifyOps(String body) {
+        String text = Json.readString(body, "text");
+        if (text == null || text.isBlank()) return 0;
+        Message msg = Message.raw(text.length() > 300 ? text.substring(0, 300) : text).color("#E8B029");
+        int sent = 0;
+        Universe u = Universe.get();
+        if (u == null) return 0;
+        for (PlayerRef p : u.getPlayers()) {
+            try {
+                if (p.hasPermission(VetoCommand.PERMISSION)) {
+                    p.sendMessage(msg);
+                    sent++;
+                }
+            } catch (Throwable ignored) {
+                // player leaving
+            }
+        }
+        return sent;
     }
 
     private static World world(String name) {

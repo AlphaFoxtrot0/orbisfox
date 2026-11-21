@@ -97,6 +97,7 @@ const ICONS = {
   wrench: '<path d="M15 4a5 5 0 0 0-5.5 6.5L3.5 16.5 7.5 20.5l6-6A5 5 0 0 0 20 9l-3 3-3-1-1-3z"/>',
   gamepad: '<path d="M7 7h10a4.5 4.5 0 0 1 4.4 5.5l-1 4.4a2.3 2.3 0 0 1-4 1L14.5 16h-5l-1.9 1.9a2.3 2.3 0 0 1-4-1l-1-4.4A4.5 4.5 0 0 1 7 7z"/><path d="M8 10v4M6 12h4"/><circle cx="16" cy="11" r=".7" fill="currentColor"/><circle cx="17.5" cy="13" r=".7" fill="currentColor"/>',
   gift: '<rect x="3.5" y="8" width="17" height="4" rx="1"/><path d="M5 12v8h14v-8M12 8v12"/><path d="M12 8c-1.5-4-6-4-5-1 .5 1.2 3 1 5 1zM12 8c1.5-4 6-4 5-1-.5 1.2-3 1-5 1z"/>',
+  book: '<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M4 20.5A2.5 2.5 0 0 0 6.5 23H20v-5"/><path d="M9 7.5h7M9 11h5"/>',
   hourglass: '<path d="M6 3h12M6 21h12M7 3c0 5 10 5 10 9s-10 4-10 9M17 3c0 5-10 5-10 9s10 4 10 9"/>',
 };
 

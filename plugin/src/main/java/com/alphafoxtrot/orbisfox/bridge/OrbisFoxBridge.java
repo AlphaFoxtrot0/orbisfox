@@ -20,11 +20,12 @@ import java.util.logging.Logger;
  */
 public class OrbisFoxBridge extends JavaPlugin {
 
-    public static final String VERSION = "1.0.0";
+    public static final String VERSION = "1.1.0";
     static final Logger LOG = Logger.getLogger("OrbisFoxBridge");
 
     private final Tracker tracker = new Tracker();
     private BridgeServer http;
+    private MapCapture map;
 
     public OrbisFoxBridge(JavaPluginInit init) {
         super(init);
@@ -54,6 +55,12 @@ public class OrbisFoxBridge extends JavaPlugin {
         } catch (Throwable t) {
             LOG.warning("Death tracking unavailable: " + t);
         }
+        try {
+            String name = System.getenv().getOrDefault("ORBISFOX_VETO_COMMAND", "veto").trim().toLowerCase();
+            getCommandRegistry().registerCommand(new VetoCommand(name.matches("[a-z][a-z0-9_-]{1,23}") ? name : "veto", tracker));
+        } catch (Throwable t) {
+            LOG.warning("Could not register /veto: " + t);
+        }
     }
 
     @Override
@@ -69,6 +76,11 @@ public class OrbisFoxBridge extends JavaPlugin {
             http = new BridgeServer(Integer.parseInt(port.trim()), token, tracker);
             http.start();
             LOG.info("OrbisFox Bridge " + VERSION + " listening on 127.0.0.1:" + port);
+            String mapDir = System.getenv("ORBISFOX_MAP_DIR");
+            if (mapDir != null && !mapDir.isBlank()) {
+                map = new MapCapture(java.nio.file.Path.of(mapDir), "1".equals(System.getenv("ORBISFOX_MAP_BACKFILL")));
+                map.start();
+            }
         } catch (Exception e) {
             LOG.severe("OrbisFox Bridge could not start: " + e);
         }
@@ -76,6 +88,7 @@ public class OrbisFoxBridge extends JavaPlugin {
 
     @Override
     protected void shutdown() {
+        if (map != null) map.stop();
         if (http != null) http.stop();
         tracker.stop();
     }

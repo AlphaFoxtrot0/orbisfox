@@ -11,7 +11,9 @@ A small Hytale server plugin that tells the OrbisFox panel what the console can'
 | **Tick rate** and tick time per world | the world's own tick-length metrics, same as `world perf` |
 | Loaded chunks, entities per world | the world's chunk and entity stores |
 | **World responsiveness** | every second each world gets a trivial task; the time it waits is reported. A stuck world shows a number that keeps climbing |
-| **Loaded chunk list and map images** | the chunk store and the server's world-map renderer, for loaded chunks only, so the map never loads or generates terrain |
+| **Loaded chunk list** | the chunk store's own index, read only while someone has the overlay open |
+| **World map tiles** | copies map images the server has already drawn for players (no extra rendering) into region tiles in OrbisFox's map folder, on a low-priority thread every 30 s |
+| **`/veto`** | operators (permission `orbisfox.veto`, which operators have) cancel OrbisFox's automatic restart or update; OrbisFox messages them privately when one starts counting down |
 
 It listens on **127.0.0.1 only** and only when the server was started by OrbisFox. OrbisFox passes a
 port and a fresh random token in the environment (`ORBISFOX_BRIDGE_PORT`, `ORBISFOX_BRIDGE_TOKEN`), and
@@ -19,7 +21,7 @@ every request must carry the token. On a server started any other way the plugin
 
 ## Status
 
-`dist/OrbisFoxBridge.jar` is built against the Hytale **0.7.7** server API (the current release).
+`dist/OrbisFoxBridge.jar` (1.1.0) is built against the Hytale **0.7.7** server API (the current release).
 It compiles cleanly against that API, and every server call it makes was checked against the real
 classes. If a later Hytale version renames something, that part switches off and logs a line; the
 rest keeps working, and the chunk map falls back to players' view areas. Rebuild against the new
@@ -62,8 +64,10 @@ All responses are JSON unless noted. Every request needs the header `X-OrbisFox-
   `world`, `x`, `y`, `z`, `ping_ms`), `stats{uuid: {distance, deaths, mob_kills, player_kills,
   chat_messages}}` (counted since this start), `events[]` newer than `since` (`death`, `kill`, `chat`),
   and `heap` (`used`, `max` bytes).
-- `GET /chunks?world=<name>`: `chunks` as `[x, z, state]` triples (chunk coordinates, 32 blocks per
-  chunk), `exact` (false when this server version offers no loaded-chunk list and the plugin falls
-  back to players' view areas), and `players`.
-- `GET /tile?world=<name>&x=<cx>&z=<cz>`: a PNG of that chunk from the server's world map. Returns
-  404 for chunks that aren't loaded.
+- `GET /chunks?world=<name>`: `chunks` as `[x, z]` pairs (chunk coordinates, 32 blocks per chunk) and
+  `exact`.
+- `POST /notify` with `{"to": "ops", "text": "..."}`: sends the text privately to every online operator;
+  replies `{"sent": n}`.
+
+Map tiles are written to the folder named by `ORBISFOX_MAP_DIR`; `ORBISFOX_MAP_BACKFILL=1` also fills in
+old explored chunks while nobody is online. `ORBISFOX_VETO_COMMAND` renames `/veto`.

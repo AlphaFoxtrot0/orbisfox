@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>World map</title>
+  <link rel="icon" type="image/png" href="img/mark-64.png">
+  <link rel="stylesheet" href="livemap.css">
+</head>
+<body>
+  <!--
+    OrbisFox explored-world map. A static page: it reads tiles and small JSON files from this folder
+    and draws everything in your browser. Link options (add after ?, joined with &):
+      world=<name>         start in this world
+      x=<blocks>&z=<blocks>&zoom=<px per block>   start position
+      follow=<player>      keep a player in the middle
+      overlay=1            hide all controls (for OBS / stream overlays)
+      bg=transparent       transparent background outside explored land
+      players=0            hide player markers
+      refresh=<seconds>    how often to look for new tiles (default 60)
+  -->
+  <canvas id="map" aria-label="World map. Drag to move, scroll or pinch to zoom."></canvas>
+  <div id="ui">
+    <div class="card title">
+      <img src="img/mark-64.png" alt="">
+      <div>
+        <div class="name" id="t-name">World map</div>
+        <div class="sub" id="t-sub">Loading...</div>
+      </div>
+      <select id="world" aria-label="World" hidden></select>
+    </div>
+    <div class="zoom">
+      <button id="zin" aria-label="Zoom in">+</button>
+      <button id="zout" aria-label="Zoom out">&minus;</button>
+      <button id="zfit" aria-label="Show everything">&#x25CE;</button>
+    </div>
+    <div class="card legend" id="legend">
+      <label class="tog" id="tog-loaded" hidden><input type="checkbox" id="loaded"> <span class="sw loaded"></span> Loaded chunks <b id="loaded-n"></b></label>
+      <span class="item" id="lg-players"><span class="sw player"></span> Players</span>
+    </div>
+    <div class="coords" id="coords"></div>
+  </div>
+  <div id="empty" class="card empty" hidden>
+    <img src="img/mark-64.png" alt="">
+    <h1>No map yet</h1>
+    <p>The map fills in as players explore. It is made by the OrbisFox Bridge plugin, which copies the in-game map the server already draws, so it costs the server nothing.</p>
+  </div>
+  <script src="livemap.js"></script>
+</body>
+</html>

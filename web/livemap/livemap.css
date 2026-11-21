@@ -1,0 +1,41 @@
+/* OrbisFox world map: AlphaFoxtrot colours, dark only. */
+@font-face { font-family: "Genos"; src: url("fonts/Genos-400.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Genos"; src: url("fonts/Genos-600.woff2") format("woff2"); font-weight: 600; font-display: swap; }
+@font-face { font-family: "Genos"; src: url("fonts/Genos-700.woff2") format("woff2"); font-weight: 700; font-display: swap; }
+
+:root {
+  --bg: #050B0C; --raised: #101A1C; --panel: #1B2A2C; --line: #2F4446; --border: #5E8A91;
+  --ink: #E2D3C0; --muted: #8FA3A5; --fox: #D66623; --cyan: #4DC4D8; --amber: #E8B029;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; background: #0A1416; color: var(--ink); font: 400 16px/22px "Genos", system-ui, sans-serif; overflow: hidden; }
+body.transparent { background: transparent; }
+canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+canvas:active { cursor: grabbing; }
+body.overlay #ui { display: none; }
+
+.card { background: rgba(16, 26, 28, 0.92); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; }
+#ui > * { position: fixed; z-index: 2; }
+.title { top: 12px; left: 12px; display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 96px); }
+.title img { width: 32px; height: 32px; }
+.title .name { font-weight: 700; font-size: 18px; line-height: 20px; }
+.title .sub { font-size: 14px; color: var(--muted); }
+select { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--border); border-radius: 8px; height: 32px; padding: 0 8px; }
+.zoom { top: 12px; right: 12px; display: flex; flex-direction: column; gap: 6px; }
+.zoom button { width: 40px; height: 40px; border-radius: 8px; border: 1px solid var(--border); background: rgba(16, 26, 28, 0.92); color: var(--ink); font: 700 20px/1 "Genos", sans-serif; cursor: pointer; }
+.zoom button:hover { background: var(--panel); }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.legend { left: 12px; bottom: 12px; display: flex; gap: 16px; align-items: center; font-size: 15px; flex-wrap: wrap; max-width: calc(100vw - 24px); }
+.legend .tog { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.legend .tog input { accent-color: var(--cyan); }
+.sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; }
+.sw.loaded { background: rgba(77, 196, 216, 0.35); border: 1px solid var(--cyan); }
+.sw.player { background: var(--fox); clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); }
+.coords { right: 12px; bottom: 12px; font: 12px/18px "Cascadia Mono", Consolas, monospace; color: var(--muted); background: rgba(5, 11, 12, 0.85); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; }
+.coords:empty { display: none; }
+.empty { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(440px, calc(100vw - 32px)); text-align: center; padding: 24px; z-index: 3; }
+.empty img { width: 64px; height: 64px; }
+.empty h1 { font-size: 28px; line-height: 34px; margin: 8px 0; }
+.empty p { color: var(--muted); margin: 0; }
+@media (max-width: 520px) { .title .sub { display: none; } }

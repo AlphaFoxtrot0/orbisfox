@@ -25,6 +25,10 @@ DOWNLOADER_ZIP = "https://downloader.hytale.com/hytale-downloader.zip"
 NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 
+class Vetoed(Exception):
+    """An in-game operator cancelled an automatic install."""
+
+
 class Updates:
     def __init__(self, core):
         self.core = core
@@ -36,6 +40,7 @@ class Updates:
         self.auth = None          # {"url", "code"} while the downloader waits for a sign-in
         self.message = None
         self._lock = threading.Lock()
+        self._warn_on, self._automated = True, False
 
     # ---------------------------------------------------------------------------- versions
     def installed_version(self):
@@ -107,26 +112,50 @@ class Updates:
                     s["label"] = label
         self.core.publish_updates()
 
-    def _warn_players(self, seconds=60):
+    def _warn(self):
+        """The 'Warn players' step: skipped when asked to install now or when nobody is online.
+        An automatic install gives 5 minutes and operators can /veto it."""
         sv = self.core.server
-        if not sv.running or not self.core.players.online:
+        if not self._warn_on or not sv.running or not self.core.players.online:
+            self._step("warn", "skip", "Warn players (nobody online)" if self._warn_on else "Warn players (skipped)")
             return
-        for left in (60, 30, 10, 5):
-            if left > seconds:
-                continue
-            try:
-                sv.say(f"The server will restart for an update in {left} seconds.", style="notify", level="warning")
-            except (RuntimeError, ValueError):
-                return
-            nxt = {60: 30, 30: 10, 10: 5, 5: 0}[left]
-            time.sleep(left - nxt)
+        seconds = 300 if self._automated else 60
+        self._step("warn", "active")
+        vetoed = threading.Event()
+        if self._automated:
+            vetoed = self.core.vetoes.begin("update", seconds, cancel=lambda: None, reason="update install")
+        try:
+            end = time.time() + seconds
+            marks = [m for m in (300, 120, 60, 30, 10, 5) if m <= seconds]
+            for m in marks:
+                while time.time() < end - m:
+                    if vetoed.wait(0.5):
+                        raise Vetoed()
+                    if not self.core.players.online:
+                        self._step("warn", "done", "Warn players (everyone left)")
+                        return
+                when = f"{m // 60} minutes" if m >= 120 else f"{m} seconds"
+                try:
+                    sv.say(f"The server will restart for an update in {when}.", style="notify", level="warning")
+                except (RuntimeError, ValueError):
+                    break
+            while time.time() < end:
+                if vetoed.wait(0.5):
+                    raise Vetoed()
+        finally:
+            if self._automated:
+                self.core.vetoes.end("update")
+        self._step("warn", "done")
 
     # ---------------------------------------------------------------------------- install
-    def install(self, method="auto"):
+    def install(self, method="auto", warn=True, automated=False):
+        """warn=False installs straight away (no countdown). automated=True: started by OrbisFox
+        itself, so in-game operators may veto it."""
         if not self._lock.acquire(blocking=False):
             raise RuntimeError("An update is already being installed.")
         self.busy = True
         self.message = None
+        self._warn_on, self._automated = bool(warn), bool(automated)
         threading.Thread(target=self._install, args=(method,), name="update", daemon=True).start()
 
     def _install(self, method):
@@ -139,6 +168,11 @@ class Updates:
                 self._install_builtin()
             else:
                 self._install_downloader()
+        except Vetoed:
+            for s in self.steps:
+                if s["state"] in ("active", "pending"):
+                    s["state"] = "skip"
+            self.message = "Cancelled in game by an operator. OrbisFox will try again after the cool-down."
         except Exception as e:  # noqa: BLE001
             self.message = str(e)
             for s in self.steps:
@@ -164,7 +198,7 @@ class Updates:
         sv = self.core.server
         if not sv.running:
             raise RuntimeError("The built-in updater needs the server running.")
-        self._steps(["fetch", "backup", "warn", "apply", "start"])
+        self._steps(["fetch", "warn", "backup", "apply", "start"])
         self._step("fetch", "active", "Server downloads the update")
         mark = time.time()
         was_staged = self.staged_dir() is not None
@@ -194,10 +228,8 @@ class Updates:
             raise RuntimeError("The server did not finish downloading the update within 30 minutes. "
                                "Check the console (try `update status`).")
         self._step("fetch", "done")
+        self._warn()
         self._backup()
-        self._step("warn", "active")
-        self._warn_players()
-        self._step("warn", "done")
         self._step("apply", "active", "Server applies the update and restarts")
         self.core.server.send("update apply --confirm", source="orbisfox")
         # The server exits with code 8; Supervisor calls apply_staged() and starts it again.
@@ -329,9 +361,7 @@ class Updates:
             prefix = jar_name[: -len("Server/HytaleServer.jar")]
         self._step("fetch", "done")
         was_running = sv.alive
-        self._step("warn", "active")
-        self._warn_players()
-        self._step("warn", "done")
+        self._warn()
         self._step("stop", "active")
         if sv.alive:
             sv.stop("installing an update")

@@ -50,6 +50,7 @@ DEFAULTS = {
         "unresponsive_s": 90,          # console stops answering for this long
         "action": "restart",           # "restart" | "warn"
         "warn_players": True,
+        "warn_seconds": 60,            # countdown before a recovery restart (operators can /veto)
         "adaptive_view": True,         # lower the view radius live while memory is tight
         "try_chunk_unload": True,      # send `chunk unload` once before a recovery restart
         "baseline_radius": None,       # the configured radius while OrbisFox has it lowered
@@ -59,7 +60,14 @@ DEFAULTS = {
         "downloader": "",      # path to hytale-downloader(.exe); blank = look in server_dir/..
         "patchline": "release",
         "check_every_hours": 6,
-        "auto_install": False,  # install when nobody is online
+        "auto_install": "off",  # "off" | "empty" (when nobody is online) | "always" (warn, operators can veto)
+        "manage_server_updates": True,   # switch off the server's own AutoApplyMode; OrbisFox does it
+    },
+    # --- in-game operators can cancel automated restarts and updates -------------------------------
+    "veto": {
+        "enabled": True,
+        "cooldown_minutes": 5,     # after a veto, that kind of action waits this long before trying again
+        "command": "veto",
     },
     # --- the OrbisFox panel itself ------------------------------------------------------------
     "panel": {
@@ -69,6 +77,16 @@ DEFAULTS = {
         "salt": "",
     },
     "start_with_windows": False,
+    "track_gpu": False,        # GPU counters cost a little CPU; the server itself doesn't render
+    # --- explored-world map (tiles come from the OrbisFox Bridge plugin) -------------------------------
+    "map": {
+        "dir": "",                 # blank = <OrbisFox data>/map
+        "public": False,           # share it read-only on your network (for OBS, another PC, a phone)
+        "port": 8767,
+        "key": "",                 # optional: viewers need ?key=... in the link
+        "show_players": True,      # player markers on the map
+        "backfill": False,         # fill in old areas slowly while nobody is online (the server loads them)
+    },
     "plugin_port": 8766,       # where the OrbisFox companion plugin reports (localhost only)
     "player_names": {},        # uuid -> last known name (filled in as players are seen)
 }
