@@ -44,10 +44,13 @@ app window) and on Linux (open it in a browser).
 - Online players with **ping**, world, position and session time
 - Kick, ban, unban, operator, whitelist, game mode, teleport, give item, locate
 - **Stats**: playtime, sessions, **distance walked, deaths, mobs killed, PvP kills**, with a leaderboard
-  and a sortable full table, plus a feed of recent deaths and kills
+  and a sortable full table, plus a feed of recent deaths and kills. Playtime and sessions from before
+  OrbisFox are read from the server's own logs; Hytale doesn't record the other stats, so they count
+  from when OrbisFox (with its plugin) started watching
 
 **Access**
-- Whitelist on or off, add and remove players; operators; bans with reasons
+- Whitelist on or off (as the running server reports it), add and remove players; operators, including
+  players who are offline (OrbisFox finds their UUID, which Hytale needs); bans with reasons
 
 **World**
 - Day/night dial: dawn, midday, dusk, midnight, pause time
@@ -194,7 +197,17 @@ OrbisFox never touches it. The Hytale server's own files stay where they are.
   Chrome if you have it, otherwise Edge, with its own profile so first-run pages don't appear. If you
   prefer a normal browser tab, choose it in Settings → *Starting and stopping* → *Open OrbisFox in*.
 - **Changing config.json by hand:** stop the server first; it rewrites its settings while running.
-  View distance and player limit can be changed live from the World panel.
+  The World panel handles this for you: view distance and player limit change live, and the rest is
+  saved and written just before the server next starts.
+- **The shared map (or the panel) times out on another device:** Windows Firewall is blocking it,
+  often because its "Allow access?" prompt was dismissed. The map window and Settings show a warning
+  with **Allow through firewall**; approve Windows' prompt on the server PC. The rule only admits
+  devices on your local network.
+- **`/veto` says the command doesn't exist:** the OrbisFox Bridge plugin isn't loaded. Install it
+  (*Mods and logs → Install plugin*) and restart the server; plugins only load at start. Settings →
+  *Operator veto* shows whether it's connected.
+- **"Slow tick" lines after a backup:** saving the world can make one chunk miss its 33 ms tick
+  while Java frees memory. One now and then is harmless; the watchdog only reacts to a steady stream.
 
 ## Development
 
@@ -212,6 +225,7 @@ orbisfox/          Python backend (standard library only)
   worldmap.py      the map folder, its viewer and the read-only network share
   selfupdate.py    OrbisFox updating itself from GitHub
   fsbrowse.py      the in-app folder browser and server finder
+  firewall.py      checks and opens Windows Firewall for the map share and network access
   backups.py  updates.py  players.py  bridge.py  routes.py  httpd.py  desktop.py
 web/               the panel (plain HTML, CSS and ES modules; no build step)
 web/livemap/       the standalone world-map viewer (copied into the map folder)

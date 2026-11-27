@@ -15,8 +15,10 @@ from xml.etree import ElementTree
 # [2026/10/27 21:12:06   INFO]           [HytaleServer] Starting HytaleServer
 LINE_RE = re.compile(r"^\[(\d{4})/(\d{2})/(\d{2}) (\d{2}):(\d{2}):(\d{2}) +([A-Z]{1,7})\] *(?:\[([^\]\n]{1,80})\] ?)?(.*)$")
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
-JOIN_RE = re.compile(r"Adding player '(.+?) \(([0-9a-fA-F-]{36})\)")
-LEAVE_RE = re.compile(r"Removing player '(.+?)' \(([0-9a-fA-F-]{36})\)")
+# Only the universe's lines: "Adding player 'Name (uuid)" and "Removing player 'Name' (uuid)". The
+# world's own "Removing player 'Name (Name)' from world 'default' (uuid)" must not match.
+JOIN_RE = re.compile(r"Adding player '([A-Za-z0-9_.\-]{1,32}) \(([0-9a-fA-F-]{36})\)")
+LEAVE_RE = re.compile(r"Removing player '([A-Za-z0-9_.\-]{1,32})' \(([0-9a-fA-F-]{36})\)")
 READY_TEXT = "Hytale Server Booted"
 STARTING_TEXT = "Starting HytaleServer"
 CMD_ECHO_RE = re.compile(r"Console executed command: (.*)$")
@@ -26,6 +28,9 @@ AUTH_OK_TEXT = "Authentication successful"
 AUTH_MISSING_RE = re.compile(r"Server starting unauthenticated|No server tokens configured|not authenticated", re.I)
 CHAT_RE = re.compile(r"^\[OrbisFox\|Chat\] (.+?): (.*)$")   # printed by the OrbisFox Bridge plugin
 SAY_RE = re.compile(r"^(?:say|broadcast) (.*)$", re.I)
+# The running server's own answer about the whitelist ("whitelist status", enable, disable). It keeps
+# the setting in memory, so this beats reading config.json.
+WHITELIST_STATE_RE = re.compile(r"Whitelist (?:is currently |is already )?(enabled|disabled)!")
 
 # Signs that a world is falling behind (see docs/chunk-freeze.md).
 STALL_PATTERNS = [
@@ -69,6 +74,29 @@ def classify(level, logger, message):
     return "info"
 
 
+SLOW_TICK_RE = re.compile(r"^Took too long to run (.+?) for section: (.+?) > TICK_STEP, Has GC Run: (true|false)"
+                          r"(?:.*Hook: ([\w.$]+))?", re.S)
+
+
+def condense(level, message):
+    """A short, readable version of a known giant log line, or None. The server's slow-tick report
+    dumps the whole chunk section (thousands of characters); people need the gist."""
+    if len(message) < 200 or not message.startswith("Took too long to run"):
+        return None
+    m = SLOW_TICK_RE.match(message)
+    if not m:
+        return None
+    d = _DUR_RE.search(m.group(2))
+    ms = int(d.group(1) or 0) * 60000 + int(d.group(2) or 0) * 1000 + int(d.group(3)) if d else None
+    hook = (m.group(4) or "").split(".")[-1].split("$")[0]
+    out = f"Slow tick: a chunk's {m.group(1)} took {ms if ms is not None else m.group(2)} ms"
+    if m.group(3) == "true":
+        out += " while Java was freeing memory"
+    if hook:
+        out += f" ({hook})"
+    return out + ". Harmless now and then; the watchdog keeps count."
+
+
 def stall_signal(message, logger=""):
     """(kind, duration_ms or None, world or None) when the line is a known stall sign."""
     for kind, rx in STALL_PATTERNS:
@@ -107,6 +135,8 @@ ITEM_RE = re.compile(r"^[A-Za-z0-9_:.\-]{1,96}$")
 
 def player_arg(name):
     name = str(name or "").strip()
+    if UUID_RE.match(name):
+        return name.lower()
     if not PLAYER_RE.match(name):
         raise ValueError("That is not a valid player name.")
     return name
@@ -119,7 +149,7 @@ def stdin_escape(line):
 
 TIME_PRESETS = {"dawn": "dawn", "midday": "midday", "dusk": "dusk", "midnight": "midnight"}
 GAMEMODES = ("adventure", "creative")
-NOTIFY_STYLES = ("", "warning", "danger", "success")
+NOTIFY_STYLES = ("", "default", "warning", "danger", "success")
 
 # Console autocomplete: (command, arguments, what it does). Hytale 0.7.x vanilla commands.
 CATALOG = [
@@ -338,6 +368,71 @@ def read_access(server_dir, names):
     return out
 
 
+def _log_time(line):
+    """Seconds since the epoch for a "[yyyy/MM/dd HH:mm:ss" log line, or None."""
+    if len(line) < 21 or line[0] != "[" or line[5] != "/":
+        return None
+    try:
+        return time.mktime((int(line[1:5]), int(line[6:8]), int(line[9:11]), int(line[12:14]), int(line[15:17]),
+                            int(line[18:20]), 0, 0, -1))
+    except ValueError:
+        return None
+
+
+def read_log_sessions(server_dir, before):
+    """Playtime from the server's own logs (logs/*.log) up to `before`: who joined when and for how
+    long. Hytale doesn't keep lifetime stats, so this is the only record of play before OrbisFox.
+    Returns {uuid: {name, sessions, playtime, first_seen, last_seen}}."""
+    base = os.path.join(server_dir, "logs")
+    try:
+        files = sorted(f for f in os.listdir(base) if f.endswith(".log") and not f.startswith("orbisfox"))
+    except OSError:
+        return {}
+    out = {}
+
+    def close(uuid, start, end):
+        if end is None or end < start:
+            return
+        h = out[uuid]
+        h["playtime"] += min(end, before) - start
+        h["last_seen"] = max(h["last_seen"] or 0, min(end, before))
+
+    for f in files:
+        open_ = {}
+        last = None
+        try:
+            fh = open(os.path.join(base, f), encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        with fh:
+            for line in fh:
+                if line.startswith("[2"):
+                    t = _log_time(line)
+                    if t is not None:
+                        last = t
+                if last is not None and last >= before:
+                    break
+                if "player '" not in line:
+                    continue
+                m = JOIN_RE.search(line)
+                if m and last is not None:
+                    uuid = m.group(2).lower()
+                    h = out.setdefault(uuid, {"name": m.group(1), "sessions": 0, "playtime": 0.0,
+                                              "first_seen": last, "last_seen": last})
+                    h["name"] = m.group(1)
+                    if uuid not in open_:
+                        h["sessions"] += 1
+                        open_[uuid] = last
+                    continue
+                m = LEAVE_RE.search(line)
+                if m and m.group(2).lower() in open_:
+                    uuid = m.group(2).lower()
+                    close(uuid, open_.pop(uuid), last)
+        for uuid, start in open_.items():   # the log ends (stop or crash) with them still on
+            close(uuid, start, last)
+    return out
+
+
 def read_players(server_dir):
     """Saved players: universe/players/<uuid>.json -> name, world, position, deaths on record."""
     out = {}
@@ -391,16 +486,14 @@ EDITABLE_CONFIG = {
 }
 
 
-def update_config(server_dir, changes):
-    path = os.path.join(server_dir, "config.json")
-    cfg = read_json(path, None)
-    if cfg is None:
-        raise RuntimeError("config.json does not exist yet: start the server once first.")
-    for k, v in changes.items():
+def config_changes(changes):
+    """Checks and converts edits to config.json. Returns {key: value}; raises ValueError."""
+    out = {}
+    for k, v in (changes or {}).items():
         if k == "GameMode":
             if v not in ("Adventure", "Creative"):
                 raise ValueError("Game mode must be Adventure or Creative.")
-            cfg.setdefault("Defaults", {})["GameMode"] = v
+            out[k] = v
             continue
         typ = EDITABLE_CONFIG.get(k)
         if not typ:
@@ -410,7 +503,20 @@ def update_config(server_dir, changes):
             v = max(1, min(32, v))
         if k == "MaxPlayers":
             v = max(1, min(1000, v))
-        cfg[k] = v
+        out[k] = v
+    return out
+
+
+def update_config(server_dir, changes):
+    path = os.path.join(server_dir, "config.json")
+    cfg = read_json(path, None)
+    if cfg is None:
+        raise RuntimeError("config.json does not exist yet: start the server once first.")
+    for k, v in config_changes(changes).items():
+        if k == "GameMode":
+            cfg.setdefault("Defaults", {})["GameMode"] = v
+        else:
+            cfg[k] = v
     write_json(path, cfg)
     return cfg
 

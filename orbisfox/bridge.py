@@ -23,6 +23,7 @@ class Bridge:
         self.token = secrets.token_urlsafe(24)
         self.connected = False
         self.version = None
+        self.load_error = None    # the server's own complaint about loading the plugin, if any
         self.last = None          # last /status payload
         self.last_ok = None
         self.events_since = 0
@@ -80,6 +81,17 @@ class Bridge:
 
     def on_server_start(self):
         self.connected, self.last, self.last_ok, self.events_since = False, None, None, 0
+        self.load_error = None
+
+    def check_line(self, level, message):
+        """Notices the server refusing or failing to load the plugin."""
+        if "OrbisFoxBridge" not in message and "orbisfox" not in message.lower():
+            return False
+        low = message.lower()
+        if level in ("SEVERE", "ERROR") or "failed to load" in low or "could not register" in low:
+            self.load_error = message.strip()[:300]
+            return True
+        return False
 
     # ---------------------------------------------------------------------------- map
     def chunks(self, world):
@@ -125,5 +137,6 @@ class Bridge:
     def info(self):
         st = self.last or {}
         return {"connected": self.connected, "version": self.version, "installed": self.installed(),
+                "load_error": self.load_error,
                 "bundled": bool(self.bundled_jar()), "worlds": st.get("worlds") or [],
                 "heap": st.get("heap")}

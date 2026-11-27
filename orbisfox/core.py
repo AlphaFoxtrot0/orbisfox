@@ -44,6 +44,7 @@ class Core:
         self.updates = Updates(self)
         self.watchdog = wdmod.Watchdog(self)
         self.vetoes = Vetoes(self)
+        self.whitelist_live = None    # what the running server last said about its whitelist
         self.memories = Memories(self)
         self.worldmap = WorldMap(self)
         self.appupdates = AppUpdates(self)
@@ -79,6 +80,7 @@ class Core:
             threading.Thread(target=lambda: self._safe_start("OrbisFox opened"), daemon=True).start()
         threading.Thread(target=self.updates.check, daemon=True).start()
         threading.Thread(target=self.appupdates.check, daemon=True).start()
+        threading.Thread(target=self.import_player_history, daemon=True).start()
 
     def _safe_start(self, reason):
         try:
@@ -87,10 +89,12 @@ class Core:
             self.log_app(f"Could not start the server: {e}", level="error")
 
     # ---------------------------------------------------------------------------- console
-    def _push(self, text, kind, lvl=""):
+    def _push(self, text, kind, lvl="", full=None):
         with self._clock:
             self._seq += 1
             ln = {"id": self._seq, "t": time.time(), "text": text, "kind": kind, "lvl": lvl}
+            if full:
+                ln["full"] = full
             self._console.append(ln)
         self.hub.publish("line", ln)
         return ln
@@ -127,7 +131,13 @@ class Core:
             last = [ln for ln in list(self._console)[-30:] if ln["kind"] == "cmd"]
             if m and any(ln["text"] == m.group(1).strip() for ln in last):
                 return
-        self._push(text, kind, lvl)
+        short = hytale.condense(lvl, msg)
+        if short:
+            full, kind = text, "warn"
+            text = text[:len(text) - len(msg)].replace(f" {lvl}]", " WARN]", 1) + short
+            self._push(text, kind, "WARN", full=full)
+        else:
+            self._push(text, kind, lvl)
         if hytale.READY_TEXT in msg:
             self.server.mark_ready()
         m = hytale.JOIN_RE.search(msg)
@@ -141,10 +151,21 @@ class Core:
             return
         if "executed command" in msg and self.vetoes.check_line(msg):
             return
+        if self.bridge.check_line(lvl, msg):
+            self.log_app("The server could not load the OrbisFox Bridge plugin, so /veto, pings and the map "
+                         "won't work this time. See the line above.", level="warn")
+            self.publish_server()
         stall = hytale.stall_signal(msg, logger)
         if stall:
             self.watchdog.on_stall(*stall)
         self._auth_watch(msg)
+        wl = hytale.WHITELIST_STATE_RE.search(msg)
+        if wl:
+            live = wl.group(1) == "enabled"
+            if live != self.whitelist_live:
+                self.whitelist_live = live
+                self._access = None
+                self.publish_access()
         if kind in ("join", "leave") or "permission" in msg.lower() or "whitelist" in msg.lower():
             self._access = None
 
@@ -179,9 +200,15 @@ class Core:
         self.toast("Server is up", "Players can join now.")
         self._access = None
         threading.Thread(target=self.players.scan_files, daemon=True).start()
+        try:
+            self.server.send("whitelist status", source="orbisfox")   # the switch shows what the server says
+        except RuntimeError:
+            pass
 
     def on_server_exit(self, code):
         self._daily_retry = None
+        self.whitelist_live = None   # config.json is the truth again once the server has stopped
+        self._access = None
         self.players.all_left()
         self.watchdog.on_server_stop()
         self.players.save(force=True)
@@ -380,9 +407,49 @@ class Core:
         if not sd:
             return {"whitelist": {"enabled": None, "entries": []}, "ops": [], "bans": []}
         if fresh or not self._access or time.time() - self._access_at > 20:
-            self._access = hytale.read_access(sd, self.players.names())
-            self._access_at = time.time()
+            acc = hytale.read_access(sd, self.players.names())
+            if self.whitelist_live is not None and self.server.alive:
+                acc["whitelist"]["enabled"] = self.whitelist_live
+            self._access, self._access_at = acc, time.time()
         return self._access
+
+    def counting_since(self):
+        """When OrbisFox started counting playtime: its first server start, or its oldest log line."""
+        t = self.settings.get("counting_since")
+        if t:
+            return float(t)
+        try:
+            with open(os.path.join(self.data_dir, "orbisfox.log"), encoding="utf-8") as f:
+                first = f.readline()
+            t = time.mktime(time.strptime(first[:19], "%Y-%m-%d %H:%M:%S"))
+        except (OSError, ValueError):
+            t = time.time()
+        self.settings.update({"counting_since": t})
+        return t
+
+    def import_player_history(self, force=False):
+        """Once per server folder: playtime and sessions from before OrbisFox, read from the server's logs."""
+        sd = self.server_dir()
+        if not sd:
+            return 0
+        key = os.path.normcase(os.path.abspath(sd))
+        done = self.settings.get("history_imported") or {}
+        if key in done and not force:
+            return 0
+        try:
+            n = self.players.import_history(sd, self.counting_since())
+        except Exception as e:  # noqa: BLE001
+            self.log_app(f"Could not read past playtime from the server's logs: {e}", level="warn")
+            return 0
+        self.settings.update({"history_imported": {key: time.time()}})
+        if n:
+            self.log_app(f"Read past playtime for {n} player{'s' if n != 1 else ''} from the server's logs.")
+        self.publish_players()
+        return n
+
+    def is_op(self, name):
+        uuid = self.players.uuid_of(name)
+        return bool(uuid) and any(o["uuid"].lower() == uuid for o in self.access_cache(fresh=True).get("ops", []))
 
     def refresh_access_soon(self, delay=1.5):
         def go():
@@ -478,6 +545,7 @@ class Core:
             self.log_app("Imported your server's existing setup: " + "; ".join(notes))
             self.toast("Imported your server's settings", "; ".join(notes[:6]), "info", 15000)
         self.players.scan_files()
+        threading.Thread(target=self.import_player_history, daemon=True).start()
         self._access = None
         self.hub.publish("settings", self.settings.public())
         self.publish_server()

@@ -5,6 +5,7 @@ import {
   distance, num, initials,
 } from "./util.js";
 import { pickServerFolder } from "./folderpicker.js";
+import { firewallNote } from "./firewall.js";
 
 const rule = (label, ...actions) => h("div", { class: "rule" }, h("span", { class: "gem" }), h("span", { class: "label" }, label),
   actions.length ? h("div", { class: "actions" }, actions) : null);
@@ -18,7 +19,10 @@ function bridgeNote(feature) {
   return h("div", { class: "note" }, icon("plug"), h("div", { class: "grow" },
     h("b", null, "Needs the OrbisFox Bridge plugin. "),
     `${feature} come from a small plugin inside the server. `,
-    b.installed ? "It's installed; it connects once the server is running." : h("a", { href: "#", onclick: (e) => { e.preventDefault(); window.orbis.openPanel("mods"); } }, "Install it")));
+    !b.installed ? h("a", { href: "#", onclick: (e) => { e.preventDefault(); window.orbis.openPanel("mods"); } }, "Install it")
+      : b.load_error ? `It's installed, but the server couldn't load it: ${b.load_error}`
+      : S.server.state === "running" ? "It's installed but hasn't connected. The server only loads plugins when it starts, so restart it if you added the plugin while it was running."
+      : "It's installed; it connects once the server is running."));
 }
 
 // ============================================================================ players
@@ -166,22 +170,22 @@ function renderAccess(body) {
     const sw = h("input", { type: "checkbox", checked: !!wl.enabled, disabled: !running, onchange: (e) => act("access/whitelist", { action: e.target.checked ? "enable" : "disable" }, e.target.checked ? "Whitelist on: only listed players can join" : "Whitelist off: anyone can join") });
     content = [
       h("div", { class: "card flat", style: { margin: "12px 0" } }, h("label", { class: "switch" }, sw, h("span", { class: "track" }),
-        h("span", null, h("b", null, "Only whitelisted players can join"), h("div", { class: "muted", style: { fontSize: "15px" } }, wl.enabled == null ? "Status unknown until the server writes its settings." : wl.enabled ? "On: everyone else is turned away." : "Off: anyone can join.")))),
+        h("span", null, h("b", null, "Only whitelisted players can join"), h("div", { class: "muted", style: { fontSize: "15px" } }, wl.enabled == null ? "Status unknown: start the server and OrbisFox asks it." : wl.enabled ? "On: everyone else is turned away." : "Off: anyone can join.")))),
       running ? null : needServer("the whitelist"),
       addRow("Player name", (n) => act("access/whitelist", { action: "add", name: n }, `${n} can join`)),
       h("div", { class: "list" }, (wl.entries || []).length ? wl.entries.map((e) => h("div", { class: "item" }, h("div", { class: "hexav off" }, initials(nameOf(e))),
         h("div", { class: "main" }, h("div", { class: "name" }, nameOf(e))),
-        h("div", { class: "acts" }, h("button", { class: "btn ghost icon xs", "aria-label": `Remove ${nameOf(e)}`, disabled: !running || !e.name, title: e.name ? "Remove" : "Name unknown: remove it in the console with the player's name", onclick: () => act("access/whitelist", { action: "remove", name: e.name }) }, icon("x", "sm")))))
+        h("div", { class: "acts" }, h("button", { class: "btn ghost icon xs", "aria-label": `Remove ${nameOf(e)}`, disabled: !running, title: "Remove", onclick: () => act("access/whitelist", { action: "remove", name: e.uuid || e.name }) }, icon("x", "sm")))))
         : h("div", { class: "empty" }, "Nobody is on the whitelist.")),
     ];
   } else if (accessTab === "ops") {
     content = [
       h("p", { class: "muted", style: { margin: "12px 0" } }, "Operators can use every command in game."),
       running ? null : needServer("operators"),
-      addRow("Player name", (n) => act("players/action", { action: "op", name: n, on: true }, `${n} is now an operator`)),
+      addRow("Player name or UUID", (n) => act("players/action", { action: "op", name: n, on: true }, `${n} is now an operator`)),
       h("div", { class: "list" }, (a.ops || []).length ? a.ops.map((e) => h("div", { class: "item" }, h("div", { class: "hexav op" }, initials(nameOf(e))),
         h("div", { class: "main" }, h("div", { class: "name" }, nameOf(e))),
-        h("div", { class: "acts" }, h("button", { class: "btn ghost icon xs", "aria-label": `Remove ${nameOf(e)}`, disabled: !running || !e.name, onclick: () => act("players/action", { action: "op", name: e.name, on: false }, `${e.name} is no longer an operator`) }, icon("x", "sm")))))
+        h("div", { class: "acts" }, h("button", { class: "btn ghost icon xs", "aria-label": `Remove ${nameOf(e)}`, disabled: !running, onclick: () => act("players/action", { action: "op", name: e.name || e.uuid, uuid: e.uuid, on: false }, `${nameOf(e)} is no longer an operator`) }, icon("x", "sm")))))
         : h("div", { class: "empty" }, "No operators yet.")),
     ];
   } else {
@@ -261,14 +265,19 @@ async function renderWorld(body) {
   const upd = () => { const n = +vr.value; vrLabel.textContent = `${n} chunks (${n * 32} blocks)${n > 12 ? "  ·  more memory" : n === 12 ? "  ·  recommended" : ""}`; };
   vr.addEventListener("input", upd); upd();
   f.MaxViewRadius = vr;
-  const lockNote = alive ? h("div", { class: "note", style: { marginBottom: "16px" } }, icon("info"), h("div", null, "View distance and player limit change live. Stop the server to change the rest: it rewrites its settings file while running.")) : null;
+  const labels = { ServerName: "server name", MOTD: "message of the day", Password: "join password", GameMode: "game mode", MaxPlayers: "player limit", MaxViewRadius: "view distance" };
+  const pend = worldCfg.pending || [];
+  const lockNote = alive ? h("div", { class: "note", style: { marginBottom: "16px" } }, icon("info"), h("div", null,
+    "View distance and player limit change right away. The rest is saved now and used the next time the server starts (it rewrites its settings file while running).",
+    pend.length ? h("div", { style: { marginTop: "6px" } }, h("b", null, "Waiting for the next start: "), pend.map((k) => labels[k] || k).join(", "), ". ",
+      h("button", { class: "btn xs", onclick: () => window.orbis.restartFlow ? window.orbis.restartFlow() : act("server/restart", {}) }, icon("restart", "sm"), "Restart now")) : null)) : null;
   clear(cfgBox, lockNote,
     h("div", { class: "field" }, h("span", { class: "label" }, "View distance"), vr, h("span", { class: "help" }, vrLabel, h("br"), "The biggest driver of memory use. Hytale recommends 12.")),
     field("MaxPlayers", "Player limit", h("input", { class: "input", type: "number", min: 1, max: 1000, value: c.MaxPlayers ?? 20 })),
-    field("ServerName", "Server name", h("input", { class: "input", value: c.ServerName || "", disabled: alive })),
-    field("MOTD", "Message of the day", h("input", { class: "input", value: c.MOTD || "", disabled: alive })),
-    field("Password", "Join password", h("input", { class: "input", type: "password", value: c.Password || "", placeholder: "No password", disabled: alive, autocomplete: "new-password" }), "Players must enter this to join. Leave empty for none."),
-    field("GameMode", "Default game mode", h("select", { class: "input", disabled: alive }, ["Adventure", "Creative"].map((m) => h("option", { value: m, selected: c.GameMode === m }, m)))),
+    field("ServerName", "Server name", h("input", { class: "input", value: c.ServerName || "", maxlength: 64 })),
+    field("MOTD", "Message of the day", h("input", { class: "input", value: c.MOTD || "", maxlength: 256 })),
+    field("Password", "Join password", h("input", { class: "input", type: "password", value: c.Password || "", placeholder: "No password", autocomplete: "new-password" }), "Players must enter this to join. Leave empty for none."),
+    field("GameMode", "Default game mode", h("select", { class: "input" }, ["Adventure", "Creative"].map((m) => h("option", { value: m, selected: c.GameMode === m }, m)))),
     h("div", { class: "row" }, h("div", { class: "grow" }), h("button", { class: "btn primary", onclick: async () => {
       const changes = {};
       for (const [k, el] of Object.entries(f)) {
@@ -278,7 +287,13 @@ async function renderWorld(body) {
       }
       if (!Object.keys(changes).length) { toast("Nothing changed"); return; }
       const r = await act("world/config", { changes });
-      if (r) { toast("Saved", r.live && r.live.length ? `Changed live: ${r.live.join(", ")}.` : "Used from the next start."); renderWorld(body); }
+      if (r) {
+        const parts = [];
+        if (r.live && r.live.length) parts.push(`Changed now: ${r.live.join(", ")}.`);
+        if (r.pending && r.pending.length) parts.push(`Used from the next start: ${r.pending.map((k) => labels[k] || k).join(", ")}.`);
+        toast("Saved", parts.join(" ") || "Used from the next start.");
+        renderWorld(body);
+      }
     } }, icon("save"), "Save settings")),
     worldCfg.worlds.length ? [rule("Worlds"), h("div", { class: "list" }, worldCfg.worlds.map((w) => h("div", { class: "item" }, icon("map"),
       h("div", { class: "main" }, h("div", { class: "name" }, w.name), h("div", { class: "sub" }, [w.seed != null ? `Seed ${w.seed}` : null, w.pvp ? "PvP on" : "PvP off"].filter(Boolean).join("  ·  "))))))] : null);
@@ -421,6 +436,10 @@ async function renderStats(body) {
       : h("div", { class: "empty" }, "No players yet."),
     h("div", { class: "row", style: { marginTop: "12px" } }, h("button", { class: "btn sm", onclick: () => statsTable(t) }, icon("trophy", "sm"), "Full table")),
     statKey !== "playtime" ? bridgeNote("Distance, kills, deaths and blocks") : null,
+    h("p", { class: "muted", style: { fontSize: "14px", lineHeight: "20px", margin: "10px 0 0" } },
+      statKey === "playtime"
+        ? "Playtime and sessions from before OrbisFox were read from the server's own logs."
+        : "Hytale doesn't record distance, kills, deaths or blocks itself, so these count from when OrbisFox and its Bridge plugin started watching."),
     rule("Recent deaths and kills"),
     evs.length ? h("div", { class: "list" }, evs.map((e) => h("div", { class: "item" }, icon(e.type === "death" ? "skull" : "sword"),
       h("div", { class: "main" }, h("div", { class: "name", style: { fontWeight: 400 } },
@@ -635,6 +654,7 @@ async function renderSettings(body) {
     h("div", { class: "field-row" }, field("Critical heap %", numIn("watchdog.heap_percent", s.watchdog.heap_percent, { min: 70, max: 99 })), field("Critical GC time %", numIn("watchdog.gc_overhead_percent", s.watchdog.gc_overhead_percent, { min: 10, max: 90 }))),
     h("div", { class: "field-row" }, field("Sustained for (s)", numIn("watchdog.window_s", s.watchdog.window_s, { min: 30, max: 1800 })), field("World stuck after (s)", numIn("watchdog.unresponsive_s", s.watchdog.unresponsive_s, { min: 10, max: 600 }))),
     rule("Operator veto"),
+    bridgeNote("The /veto command and the private messages to operators"),
     chk("veto.enabled", (s.veto || {}).enabled !== false, "Let operators cancel automatic restarts and updates",
       "Scheduled restarts, recovery restarts and automatic updates. Operators online get a private message; nothing is announced when nobody is online. Needs the OrbisFox Bridge plugin."),
     h("div", { class: "field-row" },
@@ -657,6 +677,7 @@ async function renderSettings(body) {
       "The OrbisFox Bridge plugin copies the in-game map the server already draws, so the map costs the server nothing. Viewers' browsers do the drawing."),
     chk("map.public", (s.map || {}).public, "Share the map on my network (read-only)",
       "For OBS on another PC, a phone or a second screen. Uses its own port and shows only the map, never the panel. Add &overlay=1 to the link for a stream overlay."),
+    (s.map || {}).public && window.orbis.local ? firewallNote() : null,
     h("div", { class: "field-row" },
       field("Map port", numIn("map.port", (s.map || {}).port ?? 8767, { min: 1024, max: 65535 })),
       field("Map key (optional)", txt("map.key", (s.map || {}).key || "", { placeholder: "No key" }), "Viewers need ?key=... in the link.")),
@@ -670,6 +691,7 @@ async function renderSettings(body) {
       h("span", { class: "muted", style: { fontSize: "15px" } }, "The map folder is a complete website: you can also upload it to any static web host.")),
     rule("Panel access"),
     chk("panel.lan", lanOn, "Allow other devices on my network", "Open OrbisFox from a phone or another PC. Needs a password. Takes effect after OrbisFox restarts."),
+    lanOn && !(s.map || {}).public && window.orbis.local ? firewallNote() : null,
     field("Panel password", h("div", { class: "row" }, pw, h("button", { class: "btn", onclick: async () => { if (await act("settings/password", { password: pw.value }, "Password saved")) { pw.value = ""; } } }, "Set"))),
     field("Panel port", numIn("panel.port", s.panel.port, { min: 1024, max: 65535 })),
     h("div", { class: "row", style: { position: "sticky", bottom: "-24px", background: "rgba(16,26,28,0.98)", padding: "12px 0", borderTop: "1px solid var(--line)", marginTop: "16px" } },

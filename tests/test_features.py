@@ -129,7 +129,8 @@ class Vetoing(unittest.TestCase):
             settings=s, players=types.SimpleNamespace(online={"u": {}} if online else {}),
             bridge=types.SimpleNamespace(notify_ops=lambda t: sent.append(t) or 1, connected=True),
             publish_server=lambda: None, log_app=lambda *a, **k: None, toast=lambda *a, **k: None,
-            server=types.SimpleNamespace(running=False), on_vetoed=lambda k, l: sent.append(("vetoed", k)))
+            server=types.SimpleNamespace(running=False), on_vetoed=lambda k, l: sent.append(("vetoed", k)),
+            is_op=lambda name: name.lower() == "feran_fox")
         return Vetoes(core), sent
 
     def test_veto_cancels_and_cools_down(self):
@@ -150,6 +151,15 @@ class Vetoing(unittest.TestCase):
         v.begin("daily", 600, cancel=lambda: None)
         self.assertEqual(sent, [])
         self.assertIsNone(v.active)
+
+    def test_only_operators_can_veto(self):
+        v, sent = self.make()
+        ev = v.begin("daily", 300, cancel=lambda: None)
+        self.assertTrue(v.check_line("Kweebec_Kid executed command: veto"))   # handled, but ignored
+        self.assertFalse(ev.is_set())
+        self.assertEqual(v.blocked("daily"), 0)
+        self.assertTrue(v.check_line("Feran_Fox executed command: veto"))
+        self.assertTrue(ev.is_set())
 
     def test_console_is_not_an_operator_veto(self):
         v, _ = self.make()

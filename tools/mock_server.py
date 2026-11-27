@@ -127,7 +127,8 @@ class World:
                    "RequireJoinPermission": False, "Update": {}, "Backup": {}}
             write_json(self.cfg_path, cfg)
         self.radius = int(cfg.get("MaxViewRadius") or 12)
-        for f, d in (("permissions.json", {"users": {}, "groups": {"hytale:Admin": {"permissions": ["*"]}}}),
+        self.whitelist = bool(cfg.get("RequireJoinPermission"))   # the real server keeps this in memory
+        for f, d in (("permissions.json", {"users": {}, "groups": {"Default": [], "OP": ["*"]}}),
                      ("bans.json", {"Version": 1, "Bans": []})):
             if not os.path.exists(os.path.join(root, f)):
                 write_json(os.path.join(root, f), d)
@@ -554,6 +555,7 @@ def main():
                                                                                        "server.map.region.Zone1_Tier2"])}
                                                for c in carried]}}})
                 log("INFO", "Universe|P", f"Adding player '{name} ({p.uuid})")
+                log("INFO", "World|default", f"Adding player '{name}' to world 'default' at location null ({p.uuid})")
                 next_join = now + random.uniform(6, 20)
             loaded, new, fill = world.step(dt)
             gclog.tick(dt, fill)
@@ -580,7 +582,9 @@ def main():
     def remove_player(p, reason=""):
         with world.lock:
             world.players.pop(p.uuid, None)
-        log("INFO", "Universe|P", f"Removing player '{p.name}' ({p.uuid})" + (f" - {reason}" if reason else ""))
+        # The real server prints the world's line first, then the universe's.
+        log("INFO", "PlayerSystems", f"Removing player '{p.name} ({p.name})' from world 'default' ({p.uuid})")
+        log("INFO", "Universe|P", f"Removing player '{p.name}' ({p.uuid})")
 
     def find(name):
         with world.lock:
@@ -622,7 +626,12 @@ def main():
             elif cmd in ("say", "broadcast"):
                 log("INFO", "Chat", f"[Server] {' '.join(args)}")
             elif cmd == "notify":
-                log("INFO", "Notify", " ".join(args))
+                # Like the real server: a first word naming a style is the style, not the message.
+                words = list(args)
+                style = "default"
+                if len(words) > 1 and words[0].lower() in ("default", "warning", "danger", "success"):
+                    style = words.pop(0).lower()
+                log("INFO", "Notify", f"({style}) {' '.join(words)}")
             elif cmd == "eventtitle":
                 log("INFO", "EventTitle", " ".join(args))
             elif cmd == "kick" and args:
@@ -652,22 +661,37 @@ def main():
                 write_json(path, d)
                 log("INFO", "BanCommand", f"Unbanned {args[0]}")
             elif cmd == "op" and len(args) >= 2:
-                u = uuid_for(args[1])
+                # Like the real server: a UUID, or the name of a player who is online right now.
+                target = args[1]
+                if re.match(r"^[0-9a-fA-F-]{36}$", target):
+                    u = target.lower()
+                elif find(target):
+                    u = uuid_for(target)
+                else:
+                    log("INFO", "CommandManager", f'"{target}" is not a valid UUID or online player username')
+                    continue
 
                 def f(d, add=args[0] == "add"):
-                    user = d.setdefault("users", {}).setdefault(u, {"permissions": [], "groups": []})
+                    user = d.setdefault("users", {}).setdefault(u, {"groups": []})
                     groups = set(user.get("groups") or [])
-                    groups.add("hytale:Admin") if add else groups.discard("hytale:Admin")
+                    groups.add("OP") if add else groups.discard("OP")
                     user["groups"] = sorted(groups)
                 perms_edit(f)
-                log("INFO", "OpCommand", f"{'Added' if args[0] == 'add' else 'Removed'} operator {args[1]}")
+                log("INFO", "CommandManager", f"{target} is now an operator!" if args[0] == "add" else f"{target} is no longer an operator.")
             elif cmd == "whitelist" and args:
                 sub = args[0]
                 if sub in ("enable", "on", "disable", "off"):
-                    cfg = read_json(world.cfg_path, {})
-                    cfg["RequireJoinPermission"] = sub in ("enable", "on")
-                    write_json(world.cfg_path, cfg)
-                    log("INFO", "WhitelistCommand", f"Whitelist {'enabled' if sub in ('enable', 'on') else 'disabled'}")
+                    on = sub in ("enable", "on")
+                    if on == world.whitelist:
+                        log("INFO", "CommandManager", f"Whitelist is already {'enabled' if on else 'disabled'}!")
+                    else:
+                        world.whitelist = on
+                        cfg = read_json(world.cfg_path, {})
+                        cfg["RequireJoinPermission"] = on
+                        write_json(world.cfg_path, cfg)
+                        log("INFO", "CommandManager", f"Whitelist {'enabled' if on else 'disabled'}!")
+                elif sub == "status":
+                    log("INFO", "CommandManager", f"Whitelist is currently {'enabled' if world.whitelist else 'disabled'}!")
                 elif sub in ("add", "remove") and len(args) >= 2:
                     u = uuid_for(args[1])
 
@@ -705,6 +729,11 @@ def main():
             elif cmd == "world" and args and args[0] == "save":
                 log("INFO", "Universe", "Saving all worlds...")
                 time.sleep(0.4)
+                # A real save sometimes makes one chunk miss its tick while Java frees memory.
+                comps = ", ".join("null" if i % 3 else f"ComponentType{{registry=class com.hypixel.hytale.component.ComponentRegistry@2139788441, index={i}}}" for i in range(26))
+                log("SEVERE", "World|default", "Took too long to run pre-load process hook for section: 63ms 247us 900ns > "
+                    f"TICK_STEP, Has GC Run: true, Holder{{archetype=Archetype{{componentTypes=[{comps}]}}}}, Hook: "
+                    "com.hypixel.hytale.builtin.adventure.farming.FarmingPlugin$$Lambda/0x00000000b8fee5f8@63ff69e0")
                 log("INFO", "Universe", "Saved 1 world.")
             elif cmd == "world" and args and args[0] == "perf":
                 log("INFO", "WorldPerf", f"default: {world.tps:.1f} TPS")

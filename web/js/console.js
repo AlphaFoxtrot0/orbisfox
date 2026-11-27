@@ -73,6 +73,12 @@ function render(ln) {
     if (lvl === "SEVERE" && !state.raw) m.append(h("b", null, "ERROR "));
     m.append(highlight(body));
   }
+  if (ln.full && !state.raw) {
+    const more = h("div", { class: "full", hidden: true }, ln.full);
+    m.append(" ", h("button", { class: "more", title: "Show the server's full message", onclick: (e) => {
+      more.hidden = !more.hidden; e.currentTarget.textContent = more.hidden ? "details" : "hide";
+    } }, "details"), more);
+  }
   return h("div", { class: `ln k-${ln.kind}`, "data-id": ln.id },
     h("span", { class: "t" }, clock(ln.t)), m);
 }
@@ -283,8 +289,8 @@ async function weatherMenu(anchor) {
 }
 
 async function announce() {
-  const text = await promptBox("Announce to everyone", { label: "Message", multiline: true, okLabel: "Send notice", help: "Shown as an on-screen notice to every player." });
-  if (text) act("say", { message: text, style: "notify" }, "Notice sent");
+  const text = await promptBox("Announce to everyone", { label: "Message", multiline: true, okLabel: "Announce", help: "Sent to chat, where it stays, and shown briefly as an on-screen notice to every player." });
+  if (text) act("say", { message: text, style: "announce" }, "Announced");
 }
 
 export function mountConsole(root) {

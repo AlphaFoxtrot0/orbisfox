@@ -105,7 +105,8 @@ def player_action(core, body, query):
         sv.send(f"unban {name}")
         core.refresh_access_soon()
     elif act == "op":
-        sv.send(f"op {'add' if body.get('on', True) else 'remove'} {name}")
+        # Hytale's op command only takes a UUID or the name of a player who is online right now.
+        sv.send(f"op {'add' if body.get('on', True) else 'remove'} {_uuid_for(core, name, body.get('uuid'))}")
         core.refresh_access_soon()
     elif act == "whitelist":
         sv.send(f"whitelist {'add' if body.get('on', True) else 'remove'} {name}")
@@ -137,6 +138,22 @@ def player_action(core, body, query):
         raise ValueError("Unknown player action.")
 
 
+def _uuid_for(core, name, uuid=None):
+    """A player's UUID from what OrbisFox and the server's save files know about them."""
+    for cand in (uuid, name):
+        if cand and hytale.UUID_RE.match(str(cand)):
+            return str(cand).lower()
+    found = core.players.uuid_of(name)
+    if not found:
+        core.players.scan_files()
+        found = core.players.uuid_of(name)
+    if not found:
+        raise ValueError(f"OrbisFox doesn't know {name}'s UUID yet, and Hytale needs it to make someone an "
+                         "operator while they're offline. Do it while they're online, or paste their UUID instead "
+                         "of the name.")
+    return found
+
+
 @r.get("/api/stats")
 def stats(core, body, query):
     return core.players.table()
@@ -159,6 +176,35 @@ def access_whitelist(core, body, query):
     else:
         raise ValueError("Unknown whitelist action.")
     core.refresh_access_soon()
+
+
+# ------------------------------------------------------------------------------- firewall
+def _shared_ports(core):
+    ports = []
+    mp = core.settings.get("map", {})
+    if mp.get("public"):
+        ports.append(int(mp.get("port", 8767)))
+    if core.settings["panel"].get("lan"):
+        ports.append(int(core.settings["panel"].get("port", 8765)))
+    return ports
+
+
+@r.get("/api/firewall")
+def firewall_status(core, body, query):
+    from . import firewall
+    return firewall.status(_shared_ports(core), max_age=0 if _q(query, "fresh") else 60)
+
+
+@r.post("/api/firewall/allow")
+def firewall_allow(core, body, query):
+    from . import firewall
+    try:
+        st = firewall.allow(_shared_ports(core))
+    except RuntimeError as e:
+        raise ApiError(409, str(e))
+    core.log_app("Windows Firewall now lets devices on your network reach port " +
+                 ", ".join(str(p) for p in st["ports"]) + ".")
+    return st
 
 
 # ------------------------------------------------------------------------------- world
@@ -201,7 +247,10 @@ def world_config(core, body, query):
     keys = list(hytale.EDITABLE_CONFIG)
     out = {k: cfg.get(k) for k in keys}
     out["GameMode"] = (cfg.get("Defaults") or {}).get("GameMode")
-    return {"config": out, "exists": bool(cfg), "worlds": hytale.worlds(sd), "running": core.server.alive}
+    pending = core.settings.get("pending_config") or {}
+    out.update(pending)
+    return {"config": out, "exists": bool(cfg), "worlds": hytale.worlds(sd), "running": core.server.alive,
+            "pending": sorted(pending)}
 
 
 @r.post("/api/world/config")
@@ -223,13 +272,21 @@ def world_config_save(core, body, query):
             n = max(1, min(1000, int(changes.pop("MaxPlayers"))))
             core.server.send(f"maxplayers --amount {n}", source="orbisfox")
             live.append("player limit")
-        if changes:
-            raise ApiError(409, "Stop the server to change the name, message, password, game mode or "
-                                "whitelist setting: it rewrites config.json while running.")
-    else:
+    pending = []
+    if changes and core.server.alive:
+        # The server rewrites config.json while it runs, so these wait and are written just before
+        # the next start.
+        changes = hytale.config_changes(changes)
+        core.settings.update({"pending_config": changes})
+        pending = sorted(core.settings.get("pending_config") or {})
+    elif changes:
         hytale.update_config(sd, changes)
+        left = {k: v for k, v in (core.settings.get("pending_config") or {}).items() if k not in changes}
+        core.settings.update({"pending_config": None})
+        if left:
+            core.settings.update({"pending_config": left})
     core.publish_server()
-    return {"live": live}
+    return {"live": live, "pending": pending}
 
 
 # ------------------------------------------------------------------------------- backups

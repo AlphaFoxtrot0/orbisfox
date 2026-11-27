@@ -32,6 +32,10 @@ class Players:
             self.events = data.get("events", [])[-200:]
         except (OSError, ValueError):
             pass
+        for p in self.known.values():   # names garbled by OrbisFox 1.2.0 and older (see hytale.LEAVE_RE)
+            n = p.get("name")
+            if isinstance(n, str) and ("'" in n or " (" in n):
+                p["name"] = n.split(" (")[0].split("'")[0] or n
 
     # ---------------------------------------------------------------------------- names
     def names(self):
@@ -72,6 +76,22 @@ class Players:
                 p["saved"] = {k: info.get(k) for k in ("world", "x", "y", "z", "gamemode", "death_markers")}
                 p["last_seen"] = max(p.get("last_seen") or 0, info.get("saved") or 0)
             self._dirty = True
+
+    def import_history(self, server_dir, before):
+        """Adds playtime and sessions from the server's logs up to `before` (when OrbisFox started
+        counting). Returns how many players it found."""
+        hist = hytale.read_log_sessions(server_dir, before)
+        with self._lock:
+            for uuid, h in hist.items():
+                p = self._entry(uuid, self.known.get(uuid, {}).get("name") or h["name"])
+                p["playtime"] = p.get("playtime", 0) + h["playtime"]
+                p["sessions"] = p.get("sessions", 0) + h["sessions"]
+                p["first_seen"] = min(p.get("first_seen") or h["first_seen"], h["first_seen"])
+                p["last_seen"] = max(p.get("last_seen") or 0, h["last_seen"] or 0)
+                p["from_logs"] = {"sessions": h["sessions"], "playtime": round(h["playtime"])}
+            self._dirty = True
+        self.save()
+        return len(hist)
 
     # ---------------------------------------------------------------------------- log events
     def joined(self, name, uuid):

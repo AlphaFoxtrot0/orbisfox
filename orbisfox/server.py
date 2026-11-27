@@ -132,6 +132,7 @@ class Supervisor:
                 self.core.publish_server()
                 raise
             sd = lay["server_dir"]
+            self._apply_pending_config(sd)
             env = dict(os.environ)
             env["ORBISFOX_BRIDGE_PORT"] = str(self.core.settings["plugin_port"])
             env["ORBISFOX_BRIDGE_TOKEN"] = self.core.bridge.token
@@ -237,6 +238,19 @@ class Supervisor:
         self._delayed_start(1, "after an update")
 
     # ----------------------------------------------------------------------------- input
+    def _apply_pending_config(self, sd):
+        """Settings edited in the World panel while the server was running are written now."""
+        pending = self.core.settings.get("pending_config") or {}
+        if not pending:
+            return
+        try:
+            hytale.update_config(sd, pending)
+            self.core.log_app("Applied server settings changed while it was running: " + ", ".join(sorted(pending)) + ".")
+        except (RuntimeError, ValueError, OSError) as e:
+            self.core.log_app(f"Could not apply the saved server settings: {e}", level="error")
+            return
+        self.core.settings.update({"pending_config": None})
+
     def send(self, line, echo=True, source="user"):
         """Writes one console command. Returns the line as sent."""
         line = (line or "").strip()
@@ -263,10 +277,22 @@ class Supervisor:
             raise ValueError("Write a message first.")
         if style == "title":
             return self.send(f"eventtitle {text}")
-        if style == "notify":
-            lvl = level if level in hytale.NOTIFY_STYLES else ""
-            return self.send(f"notify {lvl + ' ' if lvl else ''}{text}")
+        if style in ("notify", "announce"):
+            # notify reads a first word of default/warning/danger/success as the style, so always
+            # give one: otherwise a message starting with "Warning" would lose that word.
+            lvl = level if level in hytale.NOTIFY_STYLES and level else "default"
+            if style == "announce":
+                self.send(f"say {text}")    # chat stays readable; the on-screen notice is brief
+            return self.send(f"notify {lvl} {text}")
         return self.send(f"say {text}")
+
+    def warn_players(self, text, notice=True, level="warning"):
+        """A warning players can't miss: in chat (it stays there) and, for the bigger moments, as an
+        on-screen notice. Never raises."""
+        try:
+            self.say(text, style="announce" if notice else "chat", level=level)
+        except (RuntimeError, ValueError):
+            pass
 
     def flush_world(self, timeout=20):
         """Asks the server to save every world and waits (briefly) for it to finish."""
@@ -373,11 +399,9 @@ class Supervisor:
                     warned.add(m)
                     if self.running:
                         human = f"{m // 60} minute{'s' if m >= 120 else ''}" if m >= 60 else f"{m} second{'s' if m > 1 else ''}"
-                        try:
-                            msg = tmpl.replace("{time}", human)
-                            self.say(msg, style="notify" if m >= 10 else "chat", level="warning")
-                        except (RuntimeError, ValueError):
-                            pass
+                        msg = tmpl.replace("{time}", human)
+                        hint = self.core.vetoes.hint() if kind and m >= 30 else ""
+                        self.warn_players(msg + hint, notice=m >= 10)
             cancel.wait(0.25)
         if kind:
             self.core.vetoes.end(kind)
@@ -399,10 +423,7 @@ class Supervisor:
             if had and not quiet:
                 self.core.log_app(f"Cancelled the scheduled {had['action']}.")
                 if self.running:
-                    try:
-                        self.say(f"The scheduled {had['action']} was cancelled.", style="notify", level="success")
-                    except (RuntimeError, ValueError):
-                        pass
+                    self.warn_players(f"The scheduled {had['action']} was cancelled.", level="success")
 
 
 def which(name):

@@ -52,6 +52,17 @@ class Vetoes:
         self.core.publish_server()
         return ev
 
+    def can_veto(self):
+        """Operators can only type /veto when the Bridge plugin (which adds the command) is loaded."""
+        return self.enabled and self.core.bridge.connected
+
+    def hint(self):
+        """The bit added to a countdown warning in chat, when a veto is possible."""
+        if not self.can_veto():
+            return ""
+        cmd = self.core.settings.get("veto", {}).get("command", "veto")
+        return f" Operators can type /{cmd} to cancel."
+
     def end(self, kind):
         with self._lock:
             if self.active and self.active["kind"] == kind:
@@ -84,19 +95,21 @@ class Vetoes:
         self.core.log_app(msg, level="warn")
         self.core.toast("Cancelled in game", msg, "warn", 12000)
         if self.core.server.running:
-            try:
-                self.core.server.say(msg, style="notify", level="success")
-            except (RuntimeError, ValueError):
-                pass
+            self.core.server.warn_players(msg, level="success")
         self.core.publish_server()
         return True
 
     def check_line(self, message):
+        """The server logs "<name> executed command: veto" before it checks permissions, so a player
+        who isn't an operator produces the same line. Only operators count."""
         m = EXEC_RE.search(message)
-        if m and m.group(1).lower() not in ("console", "server"):
-            self.on_veto(m.group(1))
+        if not m or m.group(1).lower() in ("console", "server"):
+            return False
+        if not self.core.is_op(m.group(1)):
+            self.core.log_app(f"{m.group(1)} typed /veto but isn't an operator, so it was ignored.", level="warn")
             return True
-        return False
+        self.on_veto(m.group(1))
+        return True
 
     def info(self):
         a = self.active

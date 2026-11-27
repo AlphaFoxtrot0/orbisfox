@@ -48,6 +48,7 @@ class WorldMap:
     def __init__(self, core):
         self.core = core
         self.httpd = None
+        self.share_error = None
         self._last_players = None
         self._last_worlds = None
         self._started = False
@@ -164,7 +165,8 @@ class WorldMap:
         worlds = self.worlds()
         return {"dir": self.dir, "worlds": worlds, "regions": sum(w["regions"] for w in worlds),
                 "public": bool(self.httpd), "port": port, "urls": urls, "show_players": mp.get("show_players", True),
-                "backfill": mp.get("backfill", False), "bridge": self.core.bridge.connected}
+                "backfill": mp.get("backfill", False), "bridge": self.core.bridge.connected,
+                "share_wanted": bool(mp.get("public")), "share_error": self.share_error}
 
     # ---------------------------------------------------------------------------- sharing
     def start_share(self):
@@ -179,9 +181,11 @@ class WorldMap:
         try:
             self.httpd = ThreadingHTTPServer(("0.0.0.0", port), handler)
         except OSError as e:
-            self.core.log_app(f"Could not share the map on port {port}: {e}", level="warn")
+            self.share_error = f"Could not share the map on port {port}: {e}"
+            self.core.log_app(self.share_error, level="warn")
             self.httpd = None
             return None
+        self.share_error = None
         self.httpd.daemon_threads = True
         threading.Thread(target=self.httpd.serve_forever, name="map-share", daemon=True).start()
         self.core.log_app(f"Sharing the map read-only on port {port}.")

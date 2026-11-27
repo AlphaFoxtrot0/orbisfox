@@ -21,6 +21,9 @@ SKIP_NAMES = {"session.lock", ".lock"}
 NAME_RE = re.compile(r"^orbisfox-(\d{8}-\d{6})-([a-z0-9-]+)\.zip$")
 
 
+PACKED = (".region.bin", ".zip", ".jar", ".png", ".jpg", ".ogg")
+
+
 def _fmt_reason(reason):
     return re.sub(r"[^a-z0-9-]+", "-", (reason or "manual").lower()).strip("-") or "manual"
 
@@ -112,7 +115,10 @@ class Backups:
             with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED, compresslevel=3, allowZip64=True) as z:
                 for full, rel in files:
                     try:
-                        z.write(full, rel.replace("\\", "/"))
+                        # Hytale's region files are already compressed: storing them as they are
+                        # makes a backup several times faster and spares the CPU the server needs.
+                        packed = rel.lower().endswith(PACKED)
+                        z.write(full, rel.replace("\\", "/"), compress_type=zipfile.ZIP_STORED if packed else None)
                         done += os.path.getsize(full)
                     except OSError:
                         skipped.append(rel)

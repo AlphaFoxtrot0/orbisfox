@@ -15,6 +15,7 @@ function vital(id, label, onclick, opt = false) {
 }
 
 export function mountTop(root, openPanel) {
+  window.orbis.restartFlow = restartFlow;
   pill = h("div", { class: "status-pill", "data-state": "stopped", role: "status" },
     h("span", { class: "dot" }), h("span", { class: "s" }, "Stopped"), h("span", { class: "sub" }, ""));
   vitals = h("div", { class: "vitals" },

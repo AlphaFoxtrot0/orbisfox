@@ -107,7 +107,8 @@ class Watchdog:
             bump("critical", f"{len(long_min)} world ticks took over a second in the last minute")
         elif len(long_ticks) >= 3:
             bump("strained", f"{len(long_ticks)} world ticks took over a second in the last 2 minutes")
-        elif recent:
+        elif len(recent) >= 5 or any(s[1] != "tick_overrun" for s in recent):
+            # A few short overruns (a save, a GC) are normal; a steady stream is not.
             bump("strained", f"{len(recent)} slow-tick warnings in the last 2 minutes")
 
         br = self.core.bridge

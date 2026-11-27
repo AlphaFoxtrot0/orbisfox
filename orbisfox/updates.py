@@ -135,10 +135,10 @@ class Updates:
                         self._step("warn", "done", "Warn players (everyone left)")
                         return
                 when = f"{m // 60} minutes" if m >= 120 else f"{m} seconds"
-                try:
-                    sv.say(f"The server will restart for an update in {when}.", style="notify", level="warning")
-                except (RuntimeError, ValueError):
+                if not sv.running:
                     break
+                hint = self.core.vetoes.hint() if self._automated and m >= 30 else ""
+                sv.warn_players(f"The server will restart for an update in {when}.{hint}")
             while time.time() < end:
                 if vetoed.wait(0.5):
                     raise Vetoed()
